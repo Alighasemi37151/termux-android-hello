@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hello World</string>
+    <string name="hello_message">Hello, World!</string>
+    <string name="built_with">Built with Termux</string>
+    <string name="tap_me">Tap Me!</string>
+    <string name="tapped_message">You tapped %d times!</string>
+    <string name="accessibility_description">با فعال کردن این سرویس، با لمس هر کلمه انگلیسی در هر برنامه‌ای، معنی فارسی آن نمایش داده می‌شود.</string>
+</resources>

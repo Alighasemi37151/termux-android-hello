@@ -1,0 +1,54 @@
+=== پروژه اپلیکیشن ترجمه - نسخه پایدار ===
+
+تاریخ: 1404/06/22 (2026/09/13)
+
+=== ویژگی‌های فعلی اپ ===
+✅ حباب شناور قرمز (50 پیکسل) + ذره‌بین (70 پیکسل) بالای حباب
+✅ دیتابیس آفلاین با 308,225 کلمه (words.txt - 13MB)
+✅ Google Translate API (آنلاین) - ترتیب: اول گوگل، بعد دیتابیس
+✅ ترجمه تک‌کلمه با Copy کردن کلمه در هر اپ
+✅ ترجمه متن‌های طولانی (کلمه‌به‌کلمه، حداکثر 30 کلمه)
+✅ پنجره ترجمه با بسته شدن خودکار (4 ثانیه)
+✅ مدیریت Thread (جلوگیری از هنگ)
+✅ Timeout 1.5 ثانیه برای گوگل (وقتی اینترنت نیست)
+
+=== فایل‌های اصلی ===
+- src/com/example/hello/MainActivity.java (کل کد اپ)
+- AndroidManifest.xml (شامل INTERNET permission)
+- res/layout/activity_main.xml (3 دکمه)
+- res/values/strings.xml
+- res/xml/accessibility_service_config.xml
+- assets/words.txt (308,225 کلمه)
+
+=== کلاس‌های داخل MainActivity ===
+- MyDatabase: دیتابیس SQLite (DB_NAME = dictionary_v12.db)
+- FloatingBubbleService: حباب + ذره‌بین
+- WordDetectionService: Accessibility + Clipboard + Google Translate
+- ClipboardListenerService: (غیرفعال)
+- MainActivity: صفحه اصلی
+
+=== متغیرهای مهم ===
+- BUBBLE_SIZE = 50
+- MAGNIFIER_SIZE = 70
+- MAGNIFIER_OFFSET_Y = 80
+- Google API: translate.googleapis.com/translate_a/single
+
+=== نحوه ساخت و نصب ===
+cd ~/termux-android-hello
+rm -rf build
+bash build.sh
+cp build/apk/app.apk ~/storage/shared/app-$(date +%Y%m%d-%H%M).apk
+termux-open ~/storage/shared/app-$(date +%Y%m%d-%H%M).apk
+
+=== نکات مهم ===
+1. قبل از هر cat، مطمئن شو توی پوشه termux-android-hello هستی
+2. برای اضافه کردن کلمات جدید، فایل correctMeaning رو ویرایش کن
+3. اگه گوگل جواب نداد، اپ از دیتابیس استفاده می‌کنه
+4. برای متن‌های طولانی، حداکثر 30 کلمه ترجمه میشه
+
+=== قدم‌های بعدی (پیشنهاد) ===
+- تکمیل متد showLongTextTranslation (برای متن‌های طولانی)
+- تلفظ صوتی (Text-to-Speech)
+- زیباتر کردن پنجره ترجمه
+- دکمه خروج از حباب
+- تنظیمات (تغییر رنگ/اندازه)

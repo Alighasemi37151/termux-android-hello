@@ -1,0 +1,10 @@
+hello:سلام
+world:دنیا
+book:کتاب
+cat:گربه
+dog:سگ
+water:آب
+food:غذا
+house:خانه
+car:ماشین
+computer:کامپیوتر

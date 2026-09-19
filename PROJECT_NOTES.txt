@@ -1,0 +1,47 @@
+=== پروژه اپلیکیشن ترجمه ===
+
+تاریخ آخرین بروزرسانی: 1404/06/21 (2026/09/11)
+
+=== ویژگی‌های فعلی اپ ===
+1. حباب شناور قرمز (اندازه 50 پیکسل) روی همه اپ‌ها
+2. ذره‌بین (دایره سیاه با حاشیه زرد، علامت +) بالای حباب
+3. دیتابیس آفلاین با حدود 450 کلمه پرکاربرد
+4. تشخیص کلمه با جابجایی حباب (ذره‌بین روی کلمه)
+5. پنجره‌ی ترجمه که بعد از 3 ثانیه خودکار بسته می‌شه
+6. بدون نیاز به API Key و اینترنت
+
+=== فایل‌های اصلی ===
+- src/com/example/hello/MainActivity.java (کل کد اپ)
+- AndroidManifest.xml (تنظیمات)
+- res/layout/activity_main.xml (طراحی صفحه اصلی)
+- res/values/strings.xml (متن‌ها)
+- res/xml/accessibility_service_config.xml (تنظیمات سرویس)
+
+=== کلاس‌های داخل MainActivity ===
+- MyDatabase: دیتابیس SQLite (DB_NAME = dictionary_v3.db)
+- FloatingBubbleService: حباب + ذره‌بین + پنجره ترجمه
+- WordDetectionService: سرویس Accessibility برای خوندن کلمه
+- MainActivity: صفحه اصلی اپ
+
+=== متغیرهای قابل تنظیم ===
+- BUBBLE_SIZE = 50 (اندازه حباب)
+- MAGNIFIER_SIZE = 70 (اندازه ذره‌بین)
+- MAGNIFIER_OFFSET_Y = 80 (فاصله ذره‌بین از حباب)
+- hidePopupRunnable تاخیر = 3000 (زمان بسته شدن پنجره - میلی‌ثانیه)
+- translationRunnable تاخیر = 300 (زمان توقف قبل از ترجمه)
+
+=== قدم‌های بعدی (پیشنهاد) ===
+- افزایش کلمات دیتابیس (به 1000+)
+- تلفظ صوتی (Text-to-Speech)
+- زیباتر کردن پنجره ترجمه
+- دکمه خروج از حباب
+- تنظیمات (تغییر رنگ/اندازه از داخل اپ)
+
+=== نحوه ساخت و نصب ===
+cd ~/termux-android-hello
+rm -rf build
+bash build.sh
+cp build/apk/app.apk ~/storage/shared/ && termux-open ~/storage/shared/app.apk
+
+=== نکته مهم ===
+قبل از هر دستور cat، مطمئن شو توی پوشه termux-android-hello هستی (با pwd چک کن).
