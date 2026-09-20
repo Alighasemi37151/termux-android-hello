@@ -30,6 +30,9 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.content.DialogInterface;
+import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import java.io.IOException;
 import android.provider.MediaStore;
 import android.graphics.Bitmap;
@@ -571,7 +574,7 @@ public class MainActivity extends Activity {
 
         public String getGoogleTranslation(String word) {
             try {
-                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=fa&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
+                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=" + getSavedLanguage() + "&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
                 android.util.Log.d("GOOGLE", "URL: " + url);
                 java.net.URL obj = new java.net.URL(url);
                 java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
@@ -752,6 +755,17 @@ public class MainActivity extends Activity {
         Button translateButton = findViewById(R.id.translateButton);
         Button manualTranslateButton = findViewById(R.id.manualTranslateButton);
 
+        // ========== دکمه انتخاب زبان ==========
+        Button languageButton = findViewById(R.id.languageButton);
+        languageButton.setText("انتخاب زبان (" + getSavedLanguageName() + ")");
+        languageButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showLanguageDialog(languageButton);
+            }
+        });
+
+
         // ========== دکمه خاموش کردن حباب ==========
         Button stopButton = findViewById(R.id.stopButton);
         stopButton.setOnClickListener(new View.OnClickListener() {
@@ -830,6 +844,48 @@ public class MainActivity extends Activity {
     }
 
     
+    
+    // ========== متدهای انتخاب زبان ==========
+    private static final String PREFS_NAME = "app_prefs";
+    private static final String KEY_LANGUAGE = "selected_language";
+
+    private String getSavedLanguage() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        return prefs.getString(KEY_LANGUAGE, "fa");
+    }
+
+    private String getSavedLanguageName() {
+        String code = getSavedLanguage();
+        switch (code) {
+            case "fa": return "فارسی";
+            case "en": return "انگلیسی";
+            case "de": return "آلمانی";
+            case "fr": return "فرانسوی";
+            case "tr": return "ترکی";
+            case "zh": return "چینی";
+            default: return "فارسی";
+        }
+    }
+
+    private void showLanguageDialog(final Button languageButton) {
+        final String[] languages = {"فارسی", "انگلیسی", "آلمانی", "فرانسوی", "ترکی", "چینی"};
+        final String[] codes = {"fa", "en", "de", "fr", "tr", "zh"};
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("انتخاب زبان ترجمه");
+        builder.setItems(languages, new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                prefs.edit().putString(KEY_LANGUAGE, codes[which]).apply();
+                languageButton.setText("انتخاب زبان (" + languages[which] + ")");
+                Toast.makeText(MainActivity.this, "زبان به " + languages[which] + " تغییر کرد", Toast.LENGTH_SHORT).show();
+            }
+        });
+        builder.show();
+    }
+
+
     // ========== متدهای OCR (ML Kit) ==========
     private static final int PICK_IMAGE_REQUEST = 1;
 
@@ -882,7 +938,7 @@ public class MainActivity extends Activity {
     public static class ClipboardListenerService extends Service {
         public String getGoogleTranslation(String word) {
             try {
-                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=fa&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
+                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=" + getSavedLanguage() + "&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
                 java.net.URL obj = new java.net.URL(url);
                 java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
                 conn.setRequestMethod("GET");
