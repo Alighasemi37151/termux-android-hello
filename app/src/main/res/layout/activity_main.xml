@@ -56,4 +56,11 @@
         android:layout_marginTop="10dp"
         android:text="کتابخانه متن" />
 
+    <Button
+        android:id="@+id/languageButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="انتخاب زبان (فارسی)" />
+
 </LinearLayout>
