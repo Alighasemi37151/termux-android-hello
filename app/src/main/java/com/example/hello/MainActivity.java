@@ -30,6 +30,12 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.io.IOException;
+import android.provider.MediaStore;
+import android.graphics.Bitmap;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.common.InputImage;
 
 public class MainActivity extends Activity {
 
@@ -745,6 +751,28 @@ public class MainActivity extends Activity {
         final TextView resultText = findViewById(R.id.resultText);
         Button translateButton = findViewById(R.id.translateButton);
         Button manualTranslateButton = findViewById(R.id.manualTranslateButton);
+
+        // ========== دکمه خاموش کردن حباب ==========
+        Button stopButton = findViewById(R.id.stopButton);
+        stopButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Intent serviceIntent = new Intent(MainActivity.this, FloatingBubbleService.class);
+                stopService(serviceIntent);
+                Intent clipboardIntent = new Intent(MainActivity.this, ClipboardListenerService.class);
+                stopService(clipboardIntent);
+                resultText.setText("حباب و ذره‌بین خاموش شدند.");
+            }
+        });
+
+        // ========== دکمه ترجمه کل صفحه (OCR) ==========
+        manualTranslateButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pickImageFromGallery();
+            }
+        });
+
         Button toggleTranslateButton = findViewById(R.id.toggleTranslateButton);
         toggleTranslateButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -781,6 +809,73 @@ public class MainActivity extends Activity {
                 resultText.setText("حباب و ذره‌بین فعال شدند!\nذره‌بین رو روی کلمه ببر.");
             }
         });
+
+        // ========== دکمه‌های OCR ==========
+        Button scanFromGalleryButton = findViewById(R.id.scanFromGalleryButton);
+        Button libraryButton = findViewById(R.id.libraryButton);
+
+        scanFromGalleryButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pickImageFromGallery();
+            }
+        });
+
+        libraryButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                resultText.setText("کتابخانه متن (در حال ساخت...)");
+            }
+        });
+    }
+
+    
+    // ========== متدهای OCR (ML Kit) ==========
+    private static final int PICK_IMAGE_REQUEST = 1;
+
+    private void pickImageFromGallery() {
+        Intent intent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        intent.setType("image/*");
+        startActivityForResult(intent, PICK_IMAGE_REQUEST);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            Uri imageUri = data.getData();
+            extractTextFromImage(imageUri);
+        }
+    }
+
+    private void extractTextFromImage(Uri imageUri) {
+        try {
+            final TextView resultText = findViewById(R.id.resultText);
+            resultText.setText("در حال استخراج متن...");
+
+            Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
+            InputImage image = InputImage.fromBitmap(bitmap, 0);
+
+            com.google.mlkit.vision.text.TextRecognizer recognizer =
+                    TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+
+            recognizer.process(image)
+                    .addOnSuccessListener(visionText -> {
+                        String extractedText = visionText.getText();
+                        if (extractedText.isEmpty()) {
+                            resultText.setText("متنی در تصویر پیدا نشد.");
+                        } else {
+                            resultText.setText("متن استخراج شده:\n\n" + extractedText);
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        resultText.setText("خطا در استخراج متن: " + e.getMessage());
+                    });
+        } catch (IOException e) {
+            e.printStackTrace();
+            TextView resultText = findViewById(R.id.resultText);
+            resultText.setText("خطا در بارگذاری تصویر: " + e.getMessage());
+        }
     }
 
     // ========== سرویس گوش دادن به کلیپ‌بورد ==========
