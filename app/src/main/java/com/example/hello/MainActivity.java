@@ -849,12 +849,12 @@ public class MainActivity extends Activity {
     private static final String PREFS_NAME = "app_prefs";
     private static final String KEY_LANGUAGE = "selected_language";
 
-    private String getSavedLanguage() {
+    public static String getSavedLanguage() {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         return prefs.getString(KEY_LANGUAGE, "fa");
     }
 
-    private String getSavedLanguageName() {
+    public static String getSavedLanguageName() {
         String code = getSavedLanguage();
         switch (code) {
             case "fa": return "فارسی";
