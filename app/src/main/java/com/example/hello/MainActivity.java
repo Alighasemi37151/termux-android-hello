@@ -41,6 +41,7 @@ import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.common.InputImage;
 
 public class MainActivity extends Activity {
+    public static Context appContext;
 
     public static class MyDatabase extends SQLiteOpenHelper {
         private static final String DB_NAME = "dictionary_v12.db";
@@ -750,6 +751,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        appContext = this;
 
         final TextView resultText = findViewById(R.id.resultText);
         Button translateButton = findViewById(R.id.translateButton);
@@ -850,7 +852,7 @@ public class MainActivity extends Activity {
     private static final String KEY_LANGUAGE = "selected_language";
 
     public static String getSavedLanguage() {
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         return prefs.getString(KEY_LANGUAGE, "fa");
     }
 
@@ -876,7 +878,7 @@ public class MainActivity extends Activity {
         builder.setItems(languages, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
-                SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
                 prefs.edit().putString(KEY_LANGUAGE, codes[which]).apply();
                 languageButton.setText("انتخاب زبان (" + languages[which] + ")");
                 Toast.makeText(MainActivity.this, "زبان به " + languages[which] + " تغییر کرد", Toast.LENGTH_SHORT).show();
