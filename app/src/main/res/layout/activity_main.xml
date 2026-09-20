@@ -42,4 +42,18 @@
         android:layout_marginTop="10dp"
         android:text="ترجمه کل صفحه" />
 
+    <Button
+        android:id="@+id/scanFromGalleryButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="اسکن از گالری (OCR)" />
+
+    <Button
+        android:id="@+id/libraryButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="کتابخانه متن" />
+
 </LinearLayout>
