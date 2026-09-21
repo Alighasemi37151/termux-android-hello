@@ -717,6 +717,14 @@ public class MainActivity extends Activity {
                             @Override
                             public void run() {
                                 try { wm.removeView(popupView); } catch (Exception e) {}
+                                
+                                // توقف MediaProjection بعد از بسته شدن پنجره
+                                if (FloatingBubbleService.activeProjection != null) {
+                                    try {
+                                        FloatingBubbleService.activeProjection.stop();
+                                        FloatingBubbleService.activeProjection = null;
+                                    } catch (Exception e) {}
+                                }
                             }
                         }, 4000);
                     } catch (Exception e) {}
