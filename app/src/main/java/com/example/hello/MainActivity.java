@@ -367,7 +367,49 @@ public class MainActivity extends Activity {
     public static class WordDetectionService extends AccessibilityService {
         @Override
         public void onAccessibilityEvent(AccessibilityEvent event) {
-            // غیرفعال شده - به ClipboardListenerService منتقل شد
+            if (!translationEnabled) return;
+            
+            int eventType = event.getEventType();
+            
+            // فقط رویدادهای کلیک و Long Click را مدیریت کن
+            if (eventType == AccessibilityEvent.TYPE_VIEW_CLICKED || 
+                eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED) {
+                
+                AccessibilityNodeInfo source = event.getSource();
+                if (source != null) {
+                    // گرفتن مختصات لمس
+                    Rect rect = new Rect();
+                    source.getBoundsInScreen(rect);
+                    int centerX = rect.centerX();
+                    int centerY = rect.centerY();
+                    
+                    // پیدا کردن کلمه زیر لمس
+                    String word = getWordAt(centerX, centerY);
+                    
+                    if (word != null && !word.isEmpty() && word.matches("[a-zA-Z]+")) {
+                        // کلمه پیدا شد → ترجمه کن
+                        final String finalWord = word.toLowerCase();
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                String meaning = getGoogleTranslation(finalWord);
+                                if (meaning == null || meaning.isEmpty() || meaning.equals(finalWord)) {
+                                    meaning = db.getMeaning(finalWord);
+                                }
+                                if (meaning != null) {
+                                    final String finalMeaning = meaning;
+                                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            showPopupOnUI(finalWord, finalMeaning);
+                                        }
+                                    });
+                                }
+                            }
+                        }).start();
+                    }
+                }
+            }
         }
         private MyDatabase db;
         private String lastClipboard = "";
