@@ -30,6 +30,8 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.nio.ByteBuffer;
+import android.media.Image;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.hardware.display.DisplayManager;
@@ -416,6 +418,186 @@ public class MainActivity extends Activity {
             Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
         }
 
+
+        // ========== متد اسکن صفحه (OCR) ==========
+        public void startScanMode() {
+            if (FloatingBubbleService.activeProjection == null) {
+                Toast.makeText(this, "MediaProjection فعال نیست", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            // ۱. گرفتن عکس از صفحه
+            DisplayMetrics metrics = getResources().getDisplayMetrics();
+            int width = metrics.widthPixels;
+            int height = metrics.heightPixels;
+            int density = metrics.densityDpi;
+
+            final ImageReader imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+            final VirtualDisplay virtualDisplay = FloatingBubbleService.activeProjection.createVirtualDisplay(
+                    "ScreenCapture",
+                    width, height, density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    imageReader.getSurface(), null, null
+            );
+
+            // ۲. صبر کوتاه و گرفتن عکس
+            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    Image image = imageReader.acquireLatestImage();
+                    if (image == null) {
+                        Toast.makeText(WordDetectionService.this, "خطا در گرفتن عکس", Toast.LENGTH_SHORT).show();
+                        virtualDisplay.release();
+                        imageReader.close();
+                        return;
+                    }
+
+                    Image.Plane[] planes = image.getPlanes();
+                    java.nio.ByteBuffer buffer = planes[0].getBuffer();
+                    int pixelStride = planes[0].getPixelStride();
+                    int rowStride = planes[0].getRowStride();
+                    int rowPadding = rowStride - pixelStride * width;
+
+                    Bitmap bitmap = Bitmap.createBitmap(
+                            width + rowPadding / pixelStride,
+                            height,
+                            Bitmap.Config.ARGB_8888
+                    );
+                    bitmap.copyPixelsFromBuffer(buffer);
+                    image.close();
+
+                    // ۳. برش عکس به اندازه دقیق
+                    Bitmap croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height);
+
+                    // ۴. آزاد کردن منابع
+                    virtualDisplay.release();
+                    imageReader.close();
+
+                    // ۵. OCR
+                    extractTextFromBitmap(croppedBitmap);
+                }
+            }, 500);
+        }
+
+        // ========== OCR روی Bitmap ==========
+        private void extractTextFromBitmap(Bitmap bitmap) {
+            InputImage image = InputImage.fromBitmap(bitmap, 0);
+            com.google.mlkit.vision.text.TextRecognizer recognizer =
+                    TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+
+            recognizer.process(image)
+                    .addOnSuccessListener(visionText -> {
+                        // ذخیره کلمات + مختصات
+                        detectedWords.clear();
+                        for (com.google.mlkit.vision.text.Text.TextBlock block : visionText.getTextBlocks()) {
+                            for (com.google.mlkit.vision.text.Text.Line line : block.getLines()) {
+                                for (com.google.mlkit.vision.text.Text.Element element : line.getElements()) {
+                                    String word = element.getText();
+                                    Rect box = element.getBoundingBox();
+                                    if (word != null && box != null) {
+                                        detectedWords.add(new DetectedWord(word, box));
+                                    }
+                                }
+                            }
+                        }
+
+                        // نمایش لایه شفاف
+                        showTransparentOverlay();
+
+                        Toast.makeText(WordDetectionService.this,
+                                "تعداد کلمات: " + detectedWords.size(),
+                                Toast.LENGTH_SHORT).show();
+                    })
+                    .addOnFailureListener(e -> {
+                        Toast.makeText(WordDetectionService.this,
+                                "خطا در OCR: " + e.getMessage(),
+                                Toast.LENGTH_SHORT).show();
+                    });
+        }
+
+        // ========== لایه شفاف برای لمس ==========
+        private void showTransparentOverlay() {
+            final WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+            final View overlayView = new View(this);
+            overlayView.setBackgroundColor(Color.TRANSPARENT);
+
+            int layoutType;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+            } else {
+                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
+            }
+
+            final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    layoutType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT
+            );
+
+            overlayView.setOnTouchListener(new View.OnTouchListener() {
+                @Override
+                public boolean onTouch(View v, MotionEvent event) {
+                    if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                        int x = (int) event.getRawX();
+                        int y = (int) event.getRawY();
+
+                        // پیدا کردن کلمه زیر لمس
+                        for (DetectedWord dw : detectedWords) {
+                            if (dw.bounds.contains(x, y)) {
+                                translateDetectedWord(dw.text);
+                                break;
+                            }
+                        }
+
+                        // بستن لایه شفاف
+                        try { wm.removeView(overlayView); } catch (Exception e) {}
+                        return true;
+                    }
+                    return false;
+                }
+            });
+
+            wm.addView(overlayView, params);
+        }
+
+        // ========== ترجمه کلمه پیدا شده ==========
+        private void translateDetectedWord(String word) {
+            final String cleanWord = word.toLowerCase().replaceAll("[^a-z]", "");
+            if (cleanWord.isEmpty()) return;
+
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String meaning = getGoogleTranslation(cleanWord);
+                    if (meaning == null || meaning.isEmpty() || meaning.equals(cleanWord)) {
+                        meaning = db.getMeaning(cleanWord);
+                    }
+                    if (meaning != null) {
+                        final String finalMeaning = meaning;
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                showPopupOnUI(cleanWord, finalMeaning);
+                            }
+                        });
+                    }
+                }
+            }).start();
+        }
+
+        // ========== کلاس ذخیره کلمه + مختصات ==========
+        private static class DetectedWord {
+            String text;
+            Rect bounds;
+            DetectedWord(String text, Rect bounds) {
+                this.text = text;
+                this.bounds = bounds;
+            }
+        }
+
+        private java.util.List<DetectedWord> detectedWords = new java.util.ArrayList<>();
         private void onAccessibilityEvent_DISABLED(AccessibilityEvent event) {
             if (!translationEnabled) return;
             int eventType = event.getEventType();
