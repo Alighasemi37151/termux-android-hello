@@ -178,10 +178,25 @@ public class MainActivity extends Activity {
         @Override
         public void onCreate() {
             super.onCreate();
-            windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-            db = new MyDatabase(this);
-            createMagnifier();
-            createBubble();
+            
+            // بررسی دسترسی Overlay قبل از هر چیز
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (!Settings.canDrawOverlays(this)) {
+                    Toast.makeText(this, "دسترسی Overlay غیرفعاله! لطفاً از داخل اپ فعال کنید.", Toast.LENGTH_LONG).show();
+                    stopSelf();
+                    return;
+                }
+            }
+            
+            try {
+                windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+                db = new MyDatabase(this);
+                createMagnifier();
+                createBubble();
+            } catch (Exception e) {
+                Toast.makeText(this, "خطا در شروع سرویس: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                stopSelf();
+            }
         }
 
         private void createMagnifier() {
