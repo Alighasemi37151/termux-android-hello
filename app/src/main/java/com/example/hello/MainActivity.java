@@ -250,6 +250,9 @@ public class MainActivity extends Activity {
                 @Override
                 public void onClick(View v) {
                     // فعال‌سازی حالت اسکن
+                    if (mediaProjectionData == null) { Toast.makeText(FloatingBubbleService.this, "لطفاً ابتدا حباب را فعال کنید", Toast.LENGTH_SHORT).show(); return; }
+                    MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+                    activeProjection = manager.getMediaProjection(mediaProjectionResultCode, mediaProjectionData);
                     isScanModeActive = true;
                     
                     // صدا زدن متد اسکن از سرویس دسترسی‌پذیری
