@@ -833,6 +833,7 @@ public class MainActivity extends Activity {
         translateButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                // ۱. بررسی دسترسی Overlay
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     if (!Settings.canDrawOverlays(MainActivity.this)) {
                         Toast.makeText(MainActivity.this, "دسترسی Overlay غیرفعاله!", Toast.LENGTH_LONG).show();
@@ -843,11 +844,11 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                Intent serviceIntent = new Intent(MainActivity.this, FloatingBubbleService.class);
-                startService(serviceIntent);
-                Intent clipboardIntent = new Intent(MainActivity.this, ClipboardListenerService.class);
-                startService(clipboardIntent);
-                resultText.setText("حباب و ذره‌بین فعال شدند!\nذره‌بین رو روی کلمه ببر.");
+                // ۲. باز کردن MediaProjectionRequestActivity برای گرفتن اجازه
+                Intent intent = new Intent(MainActivity.this, MediaProjectionRequestActivity.class);
+                startActivity(intent);
+
+                resultText.setText("لطفاً اجازه ضبط صفحه را بدهید...");
             }
         });
 
