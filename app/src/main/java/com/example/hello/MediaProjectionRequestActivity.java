@@ -13,8 +13,14 @@ public class MediaProjectionRequestActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
-        startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CODE);
+        // تأخیر کوچک برای آماده شدن Activity
+        new android.os.Handler().postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+                startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CODE);
+            }
+        }, 150);
     }
 
     @Override
