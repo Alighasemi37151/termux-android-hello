@@ -572,6 +572,9 @@ public class MainActivity extends Activity {
                 public void run() {
                     String meaning = getGoogleTranslation(cleanWord);
                     if (meaning == null || meaning.isEmpty() || meaning.equals(cleanWord)) {
+                        meaning = getMyMemoryTranslation(cleanWord);
+                    }
+                    if (meaning == null || meaning.isEmpty() || meaning.equals(cleanWord)) {
                         meaning = db.getMeaning(cleanWord);
                     }
                     if (meaning != null) {
@@ -829,6 +832,51 @@ public class MainActivity extends Activity {
                 return null;
             }
         }
+
+        // ========== ترجمه با MyMemory (API جایگزین) ==========
+        public String getMyMemoryTranslation(String word) {
+            try {
+                String langPair = "en|" + getSavedLanguage();
+                String url = "https://api.mymemory.translated.net/get?q=" +
+                        java.net.URLEncoder.encode(word, "UTF-8") +
+                        "&langpair=" + java.net.URLEncoder.encode(langPair, "UTF-8");
+                android.util.Log.d("MYMEMORY", "URL: " + url);
+                java.net.URL obj = new java.net.URL(url);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(2000);
+                conn.setReadTimeout(2000);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+                reader.close();
+                String json = response.toString();
+                
+                // استخراج translatedText از JSON
+                String key = "\"translatedText\":\"";
+                int start = json.indexOf(key);
+                if (start == -1) return null;
+                start += key.length();
+                int end = json.indexOf("\"", start);
+                if (end == -1) return null;
+                String result = json.substring(start, end);
+                
+                // تبدیل unicode escape sequences
+                result = result.replace("\\u200c", "‌");
+                
+                android.util.Log.d("MYMEMORY", "Result: " + result);
+                if (result.isEmpty() || result.equals(word)) return null;
+                return result;
+            } catch (Exception e) {
+                android.util.Log.e("MYMEMORY", "Error: " + e.getMessage());
+                return null;
+            }
+        }
+
 
 
         private void showLongTextTranslation(final String text) {
@@ -1209,6 +1257,42 @@ public class MainActivity extends Activity {
         }
         private String wrapText(String text, int wordsPerLine) {
             String[] words = text.split(" ");
+
+        // ========== ترجمه با MyMemory (API جایگزین) ==========
+        public String getMyMemoryTranslation(String word) {
+            try {
+                String langPair = "en|" + getSavedLanguage();
+                String url = "https://api.mymemory.translated.net/get?q=" +
+                        java.net.URLEncoder.encode(word, "UTF-8") +
+                        "&langpair=" + java.net.URLEncoder.encode(langPair, "UTF-8");
+                java.net.URL obj = new java.net.URL(url);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(2000);
+                conn.setReadTimeout(2000);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+                reader.close();
+                String json = response.toString();
+                String key = "\"translatedText\":\"";
+                int start = json.indexOf(key);
+                if (start == -1) return null;
+                start += key.length();
+                int end = json.indexOf("\"", start);
+                if (end == -1) return null;
+                String result = json.substring(start, end);
+                result = result.replace("\\u200c", "\u200c");
+                if (result.isEmpty() || result.equals(word)) return null;
+                return result;
+            } catch (Exception e) {
+                return null;
+            }
+        }
             StringBuilder result = new StringBuilder();
             for (int i = 0; i < words.length; i++) {
                 result.append(words[i]);
@@ -1284,6 +1368,15 @@ public class MainActivity extends Activity {
                         meaning = getGoogleTranslation(cleanWord);
                     } catch (Exception e) {
                         meaning = null;
+                    }
+
+                    // اگر گوگل جواب نداد → MyMemory
+                    if (meaning == null || meaning.length() == 0 || meaning.equals(cleanWord)) {
+                        try {
+                            meaning = getMyMemoryTranslation(cleanWord);
+                        } catch (Exception e) {
+                            meaning = null;
+                        }
                     }
 
                     final String finalMeaning;
