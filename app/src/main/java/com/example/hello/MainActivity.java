@@ -30,6 +30,12 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
+import android.media.ImageReader;
+import android.util.DisplayMetrics;
 import android.content.DialogInterface;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
@@ -153,6 +159,9 @@ public class MainActivity extends Activity {
         private WindowManager windowManager;
         private View bubbleView;
         public static boolean isScanModeActive = false;
+        public static Intent mediaProjectionData = null;
+        public static int mediaProjectionResultCode = 0;
+        public static android.media.projection.MediaProjection activeProjection = null;
         private View magnifierView;
         private View popupView;
         private MyDatabase db;
@@ -1187,5 +1196,39 @@ public class MainActivity extends Activity {
 
         @Override
         public IBinder onBind(Intent intent) { return null; }
+    }
+
+    // ========== Activity کمکی برای درخواست اجازه MediaProjection ==========
+    public static class MediaProjectionRequestActivity extends Activity {
+        private static final int REQUEST_CODE = 1000;
+
+        @Override
+        protected void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+
+            MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CODE);
+        }
+
+        @Override
+        protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+            super.onActivityResult(requestCode, resultCode, data);
+
+            if (requestCode == REQUEST_CODE && resultCode == RESULT_OK) {
+                // ذخیره اجازه (نه خود MediaProjection)
+                FloatingBubbleService.mediaProjectionResultCode = resultCode;
+                FloatingBubbleService.mediaProjectionData = data;
+
+                // شروع FloatingBubbleService
+                Intent serviceIntent = new Intent(this, FloatingBubbleService.class);
+                startService(serviceIntent);
+
+                Toast.makeText(this, "حباب فعال شد", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "اجازه ضبط صفحه داده نشد", Toast.LENGTH_SHORT).show();
+            }
+
+            finish();
+        }
     }
 }
