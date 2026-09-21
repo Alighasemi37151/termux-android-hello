@@ -152,6 +152,7 @@ public class MainActivity extends Activity {
     public static class FloatingBubbleService extends Service {
         private WindowManager windowManager;
         private View bubbleView;
+        public static boolean isScanModeActive = false;
         private View magnifierView;
         private View popupView;
         private MyDatabase db;
@@ -236,43 +237,16 @@ public class MainActivity extends Activity {
             params.x = 100;
             params.y = 200;
 
-            bubble.setOnTouchListener(new View.OnTouchListener() {
-                private int initialX, initialY;
-                private float initialTouchX, initialTouchY;
-
+            bubble.setOnClickListener(new View.OnClickListener() {
                 @Override
-                public boolean onTouch(View v, MotionEvent event) {
-                    switch (event.getAction()) {
-                        case MotionEvent.ACTION_DOWN:
-                            initialX = params.x;
-                            initialY = params.y;
-                            initialTouchX = event.getRawX();
-                            initialTouchY = event.getRawY();
-                            if (translationRunnable != null) handler.removeCallbacks(translationRunnable);
-                            return true;
-                        case MotionEvent.ACTION_MOVE:
-                            params.x = initialX + (int) (event.getRawX() - initialTouchX);
-                            params.y = initialY + (int) (event.getRawY() - initialTouchY);
-                            windowManager.updateViewLayout(bubbleView, params);
-
-                            WindowManager.LayoutParams magParams = (WindowManager.LayoutParams) magnifierView.getLayoutParams();
-                            magParams.x = params.x + (BUBBLE_SIZE - MAGNIFIER_SIZE) / 2;
-                            magParams.y = params.y - MAGNIFIER_OFFSET_Y;
-                            windowManager.updateViewLayout(magnifierView, magParams);
-
-                            if (translationRunnable != null) handler.removeCallbacks(translationRunnable);
-                            translationRunnable = new Runnable() {
-                                @Override
-                                public void run() { translateAtPosition(params.x, params.y); }
-                            };
-                            handler.postDelayed(translationRunnable, 300);
-                            return true;
-                        case MotionEvent.ACTION_UP:
-                            if (translationRunnable != null) handler.removeCallbacks(translationRunnable);
-                            translateAtPosition(params.x, params.y);
-                            return true;
+                public void onClick(View v) {
+                    // فعال‌سازی حالت اسکن
+                    isScanModeActive = true;
+                    
+                    // صدا زدن متد اسکن از سرویس دسترسی‌پذیری
+                    if (accessibilityServiceInstance != null) {
+                        accessibilityServiceInstance.startScanMode();
                     }
-                    return false;
                 }
             });
 
