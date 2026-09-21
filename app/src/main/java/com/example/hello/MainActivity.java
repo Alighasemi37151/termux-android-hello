@@ -1257,6 +1257,17 @@ public class MainActivity extends Activity {
         }
         private String wrapText(String text, int wordsPerLine) {
             String[] words = text.split(" ");
+            StringBuilder result = new StringBuilder();
+            for (int i = 0; i < words.length; i++) {
+                result.append(words[i]);
+                if ((i + 1) % wordsPerLine == 0) {
+                    result.append("\n");
+                } else if (i < words.length - 1) {
+                    result.append(" ");
+                }
+            }
+            return result.toString();
+        }
 
         // ========== ترجمه با MyMemory (API جایگزین) ==========
         public String getMyMemoryTranslation(String word) {
@@ -1292,17 +1303,6 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return null;
             }
-        }
-            StringBuilder result = new StringBuilder();
-            for (int i = 0; i < words.length; i++) {
-                result.append(words[i]);
-                if ((i + 1) % wordsPerLine == 0) {
-                    result.append("\n");
-                } else if (i < words.length - 1) {
-                    result.append(" ");
-                }
-            }
-            return result.toString();
         }
         private MyDatabase db;
         private android.speech.tts.TextToSpeech tts;
