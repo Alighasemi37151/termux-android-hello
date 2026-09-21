@@ -555,15 +555,49 @@ public class MainActivity extends Activity {
                 @Override
                 public boolean onTouch(View v, MotionEvent event) {
                     if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                        int x = (int) event.getRawX();
-                        int y = (int) event.getRawY();
+                        int rawX = (int) event.getRawX();
+                        int rawY = (int) event.getRawY();
+                        int localX = (int) event.getX();
+                        int localY = (int) event.getY();
 
-                        // پیدا کردن کلمه زیر لمس
+                        // دیباگ: نمایش مختصات
+                        Toast.makeText(WordDetectionService.this,
+                                "لمس خام: x=" + rawX + ", y=" + rawY +
+                                "\nلمس محلی: x=" + localX + ", y=" + localY +
+                                "\nتعداد کلمات: " + detectedWords.size(),
+                                Toast.LENGTH_LONG).show();
+
+                        // پیدا کردن کلمه زیر لمس (اول با مختصات خام)
+                        boolean found = false;
                         for (DetectedWord dw : detectedWords) {
-                            if (dw.bounds.contains(x, y)) {
+                            if (dw.bounds.contains(rawX, rawY)) {
+                                Toast.makeText(WordDetectionService.this,
+                                        "پیدا شد (خام): " + dw.text + "\n" + dw.bounds.toString(),
+                                        Toast.LENGTH_SHORT).show();
                                 translateDetectedWord(dw.text);
+                                found = true;
                                 break;
                             }
+                        }
+                        
+                        // اگر با مختصات خام پیدا نشد، با مختصات محلی امتحان کن
+                        if (!found) {
+                            for (DetectedWord dw : detectedWords) {
+                                if (dw.bounds.contains(localX, localY)) {
+                                    Toast.makeText(WordDetectionService.this,
+                                            "پیدا شد (محلی): " + dw.text + "\n" + dw.bounds.toString(),
+                                            Toast.LENGTH_SHORT).show();
+                                    translateDetectedWord(dw.text);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (!found) {
+                            Toast.makeText(WordDetectionService.this,
+                                    "کلمه‌ای پیدا نشد!",
+                                    Toast.LENGTH_SHORT).show();
                         }
 
                         // بستن لایه شفاف
