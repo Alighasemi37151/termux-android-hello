@@ -991,11 +991,32 @@ public class MainActivity extends Activity {
         stopButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                // ۱. توقف MediaProjection (اگر فعال است)
+                if (FloatingBubbleService.activeProjection != null) {
+                    try {
+                        FloatingBubbleService.activeProjection.stop();
+                        FloatingBubbleService.activeProjection = null;
+                    } catch (Exception e) {}
+                }
+
+                // ۲. پاک کردن اجازه MediaProjection
+                FloatingBubbleService.mediaProjectionData = null;
+                FloatingBubbleService.mediaProjectionResultCode = 0;
+
+                // ۳. غیرفعال کردن حالت اسکن
+                FloatingBubbleService.isScanModeActive = false;
+
+                // ۴. توقف سرویس‌ها
                 Intent serviceIntent = new Intent(MainActivity.this, FloatingBubbleService.class);
                 stopService(serviceIntent);
                 Intent clipboardIntent = new Intent(MainActivity.this, ClipboardListenerService.class);
                 stopService(clipboardIntent);
-                resultText.setText("حباب و ذره‌بین خاموش شدند.");
+
+                // ۵. غیرفعال کردن ترجمه
+                WordDetectionService.translationEnabled = false;
+
+                // ۶. پیام
+                resultText.setText("حباب، MediaProjection، و ترجمه خاموش شدند.");
             }
         });
 
