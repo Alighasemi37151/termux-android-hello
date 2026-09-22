@@ -362,6 +362,10 @@ public class MainActivity extends Activity {
         }
 
         @Override
+        public int onStartCommand(Intent intent, int flags, int startId) {
+            return START_NOT_STICKY;
+        }
+
         public void onDestroy() {
             super.onDestroy();
             if (bubbleView != null) windowManager.removeView(bubbleView);
@@ -1225,7 +1229,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        Toast.makeText(MainActivity.this, "[دیباگ ۲] onActivityResult اجرا شد - requestCode: " + requestCode + ", resultCode: " + resultCode, Toast.LENGTH_LONG).show();
+        new android.os.Handler().postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(MainActivity.this, "[دیباگ ۲] onActivityResult اجرا شد - requestCode: " + requestCode + ", resultCode: " + resultCode, Toast.LENGTH_LONG).show();
+            }
+        }, 2000);
 
         // برای OCR از گالری
         if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
