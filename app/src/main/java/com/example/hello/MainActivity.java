@@ -268,10 +268,9 @@ public class MainActivity extends Activity {
                 public void onClick(View v) {
                     // فعال‌سازی حالت اسکن
                     if (mediaProjectionData == null) {
-                        // اجازه MediaProjection را نگرفته → از کاربر بخواه
-                        Intent intent = new Intent(FloatingBubbleService.this, MediaProjectionRequestActivity.class);
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(intent);
+                        Toast.makeText(FloatingBubbleService.this,
+                            "اجازه MediaProjection داده نشده! لطفاً اپ را دوباره باز کنید.",
+                            Toast.LENGTH_SHORT).show();
                         return;
                     }
                     MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
@@ -1161,11 +1160,11 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                // ۲. مستقیم FloatingBubbleService را شروع کن (بدون MediaProjection)
-                Intent serviceIntent = new Intent(MainActivity.this, FloatingBubbleService.class);
-                startService(serviceIntent);
+                // ۲. باز کردن MediaProjectionRequestActivity برای گرفتن اجازه
+                Intent intent = new Intent(MainActivity.this, MediaProjectionRequestActivity.class);
+                startActivity(intent);
 
-                resultText.setText("حباب فعال شد!");
+                resultText.setText("لطفاً اجازه ضبط صفحه را بدهید...");
             }
         });
 
