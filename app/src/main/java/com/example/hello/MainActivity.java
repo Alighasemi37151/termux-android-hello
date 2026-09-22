@@ -178,6 +178,7 @@ public class MainActivity extends Activity {
         @Override
         public void onCreate() {
             super.onCreate();
+            Toast.makeText(FloatingBubbleService.this, "[دیباگ ۳] FloatingBubbleService شروع شد", Toast.LENGTH_LONG).show();
             
             // بررسی دسترسی Overlay قبل از هر چیز
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -1161,6 +1162,7 @@ public class MainActivity extends Activity {
                 }
 
                 // ۲. درخواست اجازه MediaProjection از خود MainActivity
+                Toast.makeText(MainActivity.this, "[دیباگ ۱] شروع درخواست MediaProjection", Toast.LENGTH_SHORT).show();
                 MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
                 startActivityForResult(projectionManager.createScreenCaptureIntent(), 2000);
 
@@ -1223,9 +1225,27 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        Toast.makeText(MainActivity.this, "[دیباگ ۲] onActivityResult اجرا شد - requestCode: " + requestCode + ", resultCode: " + resultCode, Toast.LENGTH_LONG).show();
+
+        // برای OCR از گالری
         if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
             Uri imageUri = data.getData();
             extractTextFromImage(imageUri);
+        }
+
+        // برای MediaProjection
+        if (requestCode == 2000) {
+            if (resultCode == RESULT_OK && data != null) {
+                FloatingBubbleService.mediaProjectionResultCode = resultCode;
+                FloatingBubbleService.mediaProjectionData = data;
+
+                Intent serviceIntent = new Intent(MainActivity.this, FloatingBubbleService.class);
+                startService(serviceIntent);
+
+                Toast.makeText(MainActivity.this, "حباب فعال شد", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(MainActivity.this, "اجازه ضبط صفحه داده نشد", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 
