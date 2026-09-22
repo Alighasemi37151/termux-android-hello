@@ -1160,13 +1160,35 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                // ۲. باز کردن MediaProjectionRequestActivity برای گرفتن اجازه
-                Intent intent = new Intent(MainActivity.this, MediaProjectionRequestActivity.class);
-                startActivity(intent);
+                // ۲. درخواست اجازه MediaProjection از خود MainActivity
+                MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+                startActivityForResult(projectionManager.createScreenCaptureIntent(), 2000);
 
                 resultText.setText("لطفاً اجازه ضبط صفحه را بدهید...");
             }
         });
+
+        @Override
+        protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+            super.onActivityResult(requestCode, resultCode, data);
+            
+            if (requestCode == 2000) {
+                if (resultCode == RESULT_OK && data != null) {
+                    // ذخیره اجازه MediaProjection
+                    FloatingBubbleService.mediaProjectionResultCode = resultCode;
+                    FloatingBubbleService.mediaProjectionData = data;
+                    
+                    // شروع FloatingBubbleService
+                    Intent serviceIntent = new Intent(MainActivity.this, FloatingBubbleService.class);
+                    startService(serviceIntent);
+                    
+                    resultText.setText("حباب فعال شد!");
+                    Toast.makeText(MainActivity.this, "حباب فعال شد", Toast.LENGTH_SHORT).show();
+                } else {
+                    resultText.setText("اجازه ضبط صفحه داده نشد.");
+                }
+            }
+        }
 
         // ========== دکمه‌های OCR ==========
         Button scanFromGalleryButton = findViewById(R.id.scanFromGalleryButton);
