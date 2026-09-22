@@ -1167,48 +1167,7 @@ public class MainActivity extends Activity {
                 resultText.setText("لطفاً اجازه ضبط صفحه را بدهید...");
             }
         });
-
-        @Override
-        protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-            super.onActivityResult(requestCode, resultCode, data);
-            
-            if (requestCode == 2000) {
-                if (resultCode == RESULT_OK && data != null) {
-                    // ذخیره اجازه MediaProjection
-                    FloatingBubbleService.mediaProjectionResultCode = resultCode;
-                    FloatingBubbleService.mediaProjectionData = data;
-                    
-                    // شروع FloatingBubbleService
-                    Intent serviceIntent = new Intent(MainActivity.this, FloatingBubbleService.class);
-                    startService(serviceIntent);
-                    
-                    resultText.setText("حباب فعال شد!");
-                    Toast.makeText(MainActivity.this, "حباب فعال شد", Toast.LENGTH_SHORT).show();
-                } else {
-                    resultText.setText("اجازه ضبط صفحه داده نشد.");
-                }
-            }
-        }
-
-        // ========== دکمه‌های OCR ==========
-        Button scanFromGalleryButton = findViewById(R.id.scanFromGalleryButton);
-        Button libraryButton = findViewById(R.id.libraryButton);
-
-        scanFromGalleryButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                pickImageFromGallery();
-            }
-        });
-
-        libraryButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                resultText.setText("کتابخانه متن (در حال ساخت...)");
-            }
-        });
     }
-
     
     
     // ========== متدهای انتخاب زبان ==========
