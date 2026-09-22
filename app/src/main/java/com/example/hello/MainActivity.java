@@ -264,24 +264,48 @@ public class MainActivity extends Activity {
             params.x = 100;
             params.y = 200;
 
-            bubble.setOnClickListener(new View.OnClickListener() {
+            bubble.setOnTouchListener(new View.OnTouchListener() {
+                private int initialX, initialY;
+                private float initialTouchX, initialTouchY;
+                private boolean isDrag = false;
+
                 @Override
-                public void onClick(View v) {
-                    // فعال‌سازی حالت اسکن
-                    if (mediaProjectionData == null) {
-                        Toast.makeText(FloatingBubbleService.this,
-                            "اجازه MediaProjection داده نشده! لطفاً اپ را دوباره باز کنید.",
-                            Toast.LENGTH_SHORT).show();
-                        return;
+                public boolean onTouch(View v, MotionEvent event) {
+                    switch (event.getAction()) {
+                        case MotionEvent.ACTION_DOWN:
+                            initialX = params.x;
+                            initialY = params.y;
+                            initialTouchX = event.getRawX();
+                            initialTouchY = event.getRawY();
+                            isDrag = false;
+                            return true;
+                        case MotionEvent.ACTION_MOVE:
+                            int dx = (int) (event.getRawX() - initialTouchX);
+                            int dy = (int) (event.getRawY() - initialTouchY);
+                            if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                                isDrag = true;
+                                params.x = initialX + dx;
+                                params.y = initialY + dy;
+                                windowManager.updateViewLayout(bubbleView, params);
+                            }
+                            return true;
+                        case MotionEvent.ACTION_UP:
+                            if (!isDrag) {
+                                // Tap → اسکن
+                                if (mediaProjectionData == null) {
+                                    Toast.makeText(FloatingBubbleService.this, "اجازه MediaProjection داده نشده!", Toast.LENGTH_SHORT).show();
+                                    return true;
+                                }
+                                MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+                                activeProjection = manager.getMediaProjection(mediaProjectionResultCode, mediaProjectionData);
+                                isScanModeActive = true;
+                                if (accessibilityServiceInstance != null) {
+                                    accessibilityServiceInstance.startScanMode();
+                                }
+                            }
+                            return true;
                     }
-                    MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
-                    activeProjection = manager.getMediaProjection(mediaProjectionResultCode, mediaProjectionData);
-                    isScanModeActive = true;
-                    
-                    // صدا زدن متد اسکن از سرویس دسترسی‌پذیری
-                    if (accessibilityServiceInstance != null) {
-                        accessibilityServiceInstance.startScanMode();
-                    }
+                    return false;
                 }
             });
 
