@@ -178,7 +178,9 @@ public class MainActivity extends Activity {
         @Override
         public void onCreate() {
             super.onCreate();
-            Toast.makeText(FloatingBubbleService.this, "[دیباگ ۳] FloatingBubbleService شروع شد", Toast.LENGTH_LONG).show();
+            android.widget.Toast t3 = android.widget.Toast.makeText(FloatingBubbleService.this, "[3] FloatingBubbleService شروع شد", Toast.LENGTH_SHORT);
+            t3.setGravity(android.view.Gravity.CENTER, 0, 0);
+            t3.show();
             
             // بررسی دسترسی Overlay قبل از هر چیز
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -292,8 +294,10 @@ public class MainActivity extends Activity {
                         case MotionEvent.ACTION_UP:
                             if (!isDrag) {
                                 // Tap → اسکن
+                                android.widget.Toast t4 = android.widget.Toast.makeText(FloatingBubbleService.this, "[4] تپ روی حباب - mediaProjectionData: " + (mediaProjectionData != null ? "دارد" : "ندارد"), Toast.LENGTH_SHORT);
+                                t4.setGravity(android.view.Gravity.BOTTOM | android.view.Gravity.LEFT, 50, 100);
+                                t4.show();
                                 if (mediaProjectionData == null) {
-                                    Toast.makeText(FloatingBubbleService.this, "اجازه MediaProjection داده نشده!", Toast.LENGTH_SHORT).show();
                                     return true;
                                 }
                                 MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
@@ -1190,7 +1194,9 @@ public class MainActivity extends Activity {
                 }
 
                 // ۲. درخواست اجازه MediaProjection از خود MainActivity
-                Toast.makeText(MainActivity.this, "[دیباگ ۱] شروع درخواست MediaProjection", Toast.LENGTH_SHORT).show();
+                android.widget.Toast t1 = android.widget.Toast.makeText(MainActivity.this, "[1] شروع درخواست MediaProjection", Toast.LENGTH_SHORT);
+        t1.setGravity(android.view.Gravity.TOP | android.view.Gravity.LEFT, 50, 100);
+        t1.show();
                 MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
                 startActivityForResult(projectionManager.createScreenCaptureIntent(), 2000);
 
@@ -1253,12 +1259,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        new android.os.Handler().postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                Toast.makeText(MainActivity.this, "[دیباگ ۲] onActivityResult اجرا شد - requestCode: " + requestCode + ", resultCode: " + resultCode, Toast.LENGTH_LONG).show();
-            }
-        }, 2000);
+        android.widget.Toast t2 = android.widget.Toast.makeText(MainActivity.this, "[2] onActivityResult - req: " + requestCode + ", res: " + resultCode, Toast.LENGTH_SHORT);
+        t2.setGravity(android.view.Gravity.TOP | android.view.Gravity.RIGHT, 50, 100);
+        t2.show();
 
         // برای OCR از گالری
         if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
