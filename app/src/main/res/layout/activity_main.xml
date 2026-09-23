@@ -19,14 +19,21 @@
         android:id="@+id/translateButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="فعال‌سازی حباب" />
+        android:text="🔵 فعال‌سازی حباب OCR" />
+
+    <Button
+        android:id="@+id/clipboardButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="📋 فعال‌سازی مسیر کپی" />
 
     <Button
         android:id="@+id/stopButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
-        android:text="خاموش کردن حباب" />
+        android:text="خاموش کردن همه" />
 
     <Button
         android:id="@+id/toggleTranslateButton"

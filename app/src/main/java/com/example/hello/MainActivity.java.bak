@@ -164,9 +164,12 @@ public class MainActivity extends Activity {
         public static Intent mediaProjectionData = null;
         public static int mediaProjectionResultCode = 0;
         public static android.media.projection.MediaProjection activeProjection = null;
+        private View magnifierView;
         private View popupView;
         private MyDatabase db;
         private static final int BUBBLE_SIZE = 50;
+        private static final int MAGNIFIER_SIZE = 15;
+        private static final int MAGNIFIER_OFFSET_Y = 80;
         private Handler handler = new Handler(Looper.getMainLooper());
         private Runnable translationRunnable;
         private Runnable hidePopupRunnable;
@@ -175,6 +178,9 @@ public class MainActivity extends Activity {
         @Override
         public void onCreate() {
             super.onCreate();
+            android.widget.Toast t3 = android.widget.Toast.makeText(FloatingBubbleService.this, "[3] FloatingBubbleService شروع شد", Toast.LENGTH_SHORT);
+            t3.setGravity(android.view.Gravity.CENTER, 0, 0);
+            t3.show();
             
             // بررسی دسترسی Overlay قبل از هر چیز
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -188,11 +194,47 @@ public class MainActivity extends Activity {
             try {
                 windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
                 db = new MyDatabase(this);
+                createMagnifier();
                 createBubble();
             } catch (Exception e) {
                 Toast.makeText(this, "خطا در شروع سرویس: " + e.getMessage(), Toast.LENGTH_LONG).show();
                 stopSelf();
             }
+        }
+
+        private void createMagnifier() {
+            TextView magnifier = new TextView(this);
+            magnifier.setText("+");
+            magnifier.setTextSize(24);
+            magnifier.setTextColor(Color.WHITE);
+            magnifier.setGravity(Gravity.CENTER);
+
+            GradientDrawable shape = new GradientDrawable();
+            shape.setShape(GradientDrawable.OVAL);
+            shape.setColor(Color.argb(150, 0, 0, 0));
+            // دایره زرد حذف شد
+            shape.setSize(MAGNIFIER_SIZE, MAGNIFIER_SIZE);
+            magnifier.setBackground(shape);
+
+            int layoutType;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+            } else {
+                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
+            }
+
+            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    MAGNIFIER_SIZE, MAGNIFIER_SIZE, layoutType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT);
+
+            params.gravity = Gravity.TOP | Gravity.START;
+            params.x = 90;
+            params.y = 280;
+
+            magnifierView = magnifier;
+            magnifierView.setAlpha(0.5f);
+            windowManager.addView(magnifierView, params);
         }
 
         private void createBubble() {
@@ -252,6 +294,9 @@ public class MainActivity extends Activity {
                         case MotionEvent.ACTION_UP:
                             if (!isDrag) {
                                 // Tap → اسکن
+                                android.widget.Toast t4 = android.widget.Toast.makeText(FloatingBubbleService.this, "[4] تپ روی حباب - mediaProjectionData: " + (mediaProjectionData != null ? "دارد" : "ندارد"), Toast.LENGTH_SHORT);
+                                t4.setGravity(android.view.Gravity.BOTTOM | android.view.Gravity.LEFT, 50, 100);
+                                t4.show();
                                 if (mediaProjectionData == null || activeProjection == null) {
                                     Toast.makeText(FloatingBubbleService.this, "MediaProjection فعال نیست", Toast.LENGTH_SHORT).show();
                                     return true;
@@ -269,6 +314,19 @@ public class MainActivity extends Activity {
 
             bubbleView = bubble;
             windowManager.addView(bubbleView, params);
+        }
+
+        private void translateAtPosition(int x, int y) {
+            if (accessibilityServiceInstance == null) return;
+            int magX = x + (BUBBLE_SIZE - MAGNIFIER_SIZE) / 2 + MAGNIFIER_SIZE / 2;
+            int magY = (y - MAGNIFIER_OFFSET_Y) + MAGNIFIER_SIZE / 2;
+            String word = accessibilityServiceInstance.getWordAt(magX, magY);
+            if (word == null || word.isEmpty()) return;
+            if (word.equals(lastTranslatedWord)) return;
+            String meaning = db.getMeaning(word);
+            if (meaning == null) return;
+            lastTranslatedWord = word;
+            showTranslationPopup(word, meaning);
         }
 
         public void showTranslationPopup(String word, String meaning) {
@@ -338,6 +396,7 @@ public class MainActivity extends Activity {
         public void onDestroy() {
             super.onDestroy();
             if (bubbleView != null) windowManager.removeView(bubbleView);
+            if (magnifierView != null) windowManager.removeView(magnifierView);
             if (popupView != null) windowManager.removeView(popupView);
         }
 
@@ -392,7 +451,6 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        private android.speech.tts.TextToSpeech tts;
         private MyDatabase db;
         private String lastClipboard = "";
         public static boolean translationEnabled = true;
@@ -403,15 +461,6 @@ public class MainActivity extends Activity {
         public void onServiceConnected() {
             super.onServiceConnected();
             db = new MyDatabase(this);
-            tts = new android.speech.tts.TextToSpeech(this,
-                    new android.speech.tts.TextToSpeech.OnInitListener() {
-                @Override
-                public void onInit(int status) {
-                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-                        tts.setLanguage(java.util.Locale.US);
-                    }
-                }
-            });
             accessibilityServiceInstance = this;
             int wc = db.getWordCount();
             String forceM = db.getMeaning("force");
@@ -713,26 +762,7 @@ public class MainActivity extends Activity {
             t.start();
         }
 
-        private String wrapText(String text, int maxWordsPerLine) {
-        if (text == null) return "";
-        String[] words = text.trim().split("\\s+");
-        StringBuilder result = new StringBuilder();
-        int count = 0;
-
-        for (String word : words) {
-            if (count > 0 && count >= maxWordsPerLine) {
-                result.append("\\n");
-                count = 0;
-            } else if (count > 0) {
-                result.append(" ");
-            }
-            result.append(word);
-            count++;
-        }
-        return result.toString();
-    }
-
-    private void showPopupOnUI(final String word, final String meaning) {
+        private void showPopupOnUI(final String word, final String meaning) {
             Handler h = new Handler(Looper.getMainLooper());
             h.post(new Runnable() {
                 @Override
@@ -740,112 +770,58 @@ public class MainActivity extends Activity {
                     try {
                         WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
                         if (wm == null) return;
-
                         LinearLayout layout = new LinearLayout(WordDetectionService.this);
                         layout.setOrientation(LinearLayout.VERTICAL);
-
-                        GradientDrawable bg = new GradientDrawable();
-                        bg.setShape(GradientDrawable.RECTANGLE);
-                        bg.setColor(Color.argb(240, 255, 255, 255));
-                        bg.setCornerRadius(30);
-                        bg.setStroke(2, Color.argb(100, 200, 200, 200));
-
-                        layout.setBackground(bg);
-                        layout.setAlpha(0.95f);
-                        layout.setPadding(25, 20, 25, 20);
-                        layout.setGravity(Gravity.CENTER_HORIZONTAL);
-
-                        LinearLayout wordRow =
-                                new LinearLayout(WordDetectionService.this);
-                        wordRow.setOrientation(LinearLayout.HORIZONTAL);
-                        wordRow.setGravity(Gravity.CENTER_VERTICAL);
-                        wordRow.setPadding(10, 0, 10, 0);
-
-                        TextView wordText =
-                                new TextView(WordDetectionService.this);
+                        layout.setBackgroundColor(Color.WHITE);
+                        layout.setPadding(40, 30, 40, 30);
+                        TextView wordText = new TextView(WordDetectionService.this);
                         wordText.setText(word);
                         wordText.setTextSize(20);
                         wordText.setTextColor(Color.BLACK);
-                        wordText.setPadding(0, 0, 30, 0);
-                        wordRow.addView(wordText);
-
-                        Button speakBtn =
-                                new Button(WordDetectionService.this);
-                        speakBtn.setText("🔊");
-                        speakBtn.setTextSize(18);
-                        speakBtn.setBackgroundColor(Color.TRANSPARENT);
-                        speakBtn.setPadding(20, 0, 20, 0);
-
-                        speakBtn.setOnClickListener(new View.OnClickListener() {
-                            @Override
-                            public void onClick(View v) {
-                                if (tts != null) {
-                                    tts.speak(
-                                        word,
-                                        android.speech.tts.TextToSpeech.QUEUE_FLUSH,
-                                        null,
-                                        null
-                                    );
-                                }
-                            }
-                        });
-
-                        wordRow.addView(speakBtn);
-
-                        TextView meaningText =
-                                new TextView(WordDetectionService.this);
-                        meaningText.setText(wrapText(meaning, 7));
+                        TextView meaningText = new TextView(WordDetectionService.this);
+                        meaningText.setText(meaning);
                         meaningText.setTextSize(18);
                         meaningText.setTextColor(Color.DKGRAY);
                         meaningText.setPadding(0, 15, 0, 15);
-                        meaningText.setGravity(Gravity.CENTER_HORIZONTAL);
-
-                        layout.addView(wordRow);
+                        // layout.addView(wordText); // متن اصلی حذف شد
                         layout.addView(meaningText);
-
                         int layoutType;
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            layoutType =
-                                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+                            layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
                         } else {
-                            layoutType =
-                                WindowManager.LayoutParams.TYPE_PHONE;
+                            layoutType = WindowManager.LayoutParams.TYPE_PHONE;
                         }
-
-                        WindowManager.LayoutParams params =
-                                new WindowManager.LayoutParams(
-                                    WindowManager.LayoutParams.WRAP_CONTENT,
-                                    WindowManager.LayoutParams.WRAP_CONTENT,
-                                    layoutType,
-                                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                                    PixelFormat.TRANSLUCENT
-                                );
-
-                        params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-                        params.y = 150;
-
+                        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                                WindowManager.LayoutParams.WRAP_CONTENT,
+                                WindowManager.LayoutParams.WRAP_CONTENT,
+                                layoutType,
+                                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                                PixelFormat.TRANSLUCENT);
+                        params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+                        params.y = 200;
                         final View popupView = layout;
                         wm.addView(popupView, params);
-
                         Handler h2 = new Handler(Looper.getMainLooper());
                         h2.postDelayed(new Runnable() {
                             @Override
                             public void run() {
-                                try {
-                                    wm.removeView(popupView);
-                                } catch (Exception e) {}
+                                try { wm.removeView(popupView); } catch (Exception e) {}
+                                
                             }
-                        }, 3000);
-
+                        }, 4000);
                     } catch (Exception e) {}
                 }
             });
         }
 
         public String getWordAt(int x, int y) {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root == null) return null;
-            return findWordInNode(root, x, y);
+            try {
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root == null) return null;
+                return findWordInNode(root, x, y);
+            } catch (Exception e) {
+                return null;
+            }
         }
 
         private String findWordInNode(AccessibilityNodeInfo node, int x, int y) {
@@ -1227,6 +1203,9 @@ public class MainActivity extends Activity {
                 }
 
                 // ۲. درخواست اجازه MediaProjection از خود MainActivity
+                android.widget.Toast t1 = android.widget.Toast.makeText(MainActivity.this, "[1] شروع درخواست MediaProjection", Toast.LENGTH_SHORT);
+        t1.setGravity(android.view.Gravity.TOP | android.view.Gravity.LEFT, 50, 100);
+        t1.show();
                 MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
                 startActivityForResult(projectionManager.createScreenCaptureIntent(), 2000);
 
@@ -1289,6 +1268,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        android.widget.Toast t2 = android.widget.Toast.makeText(MainActivity.this, "[2] onActivityResult - req: " + requestCode + ", res: " + resultCode, Toast.LENGTH_SHORT);
+        t2.setGravity(android.view.Gravity.TOP | android.view.Gravity.RIGHT, 50, 100);
+        t2.show();
 
         // برای OCR از گالری
         if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
@@ -1325,14 +1307,10 @@ public class MainActivity extends Activity {
 
                 Intent serviceIntent = new Intent(MainActivity.this,
                     FloatingBubbleService.class);
-                Button bubbleButton = findViewById(R.id.translateButton);
-                bubbleButton.setText("🔴 خاموش کردن حباب OCR");
                 startService(serviceIntent);
 
                 Toast.makeText(MainActivity.this, "حباب فعال شد", Toast.LENGTH_SHORT).show();
             } else {
-                Button bubbleButton = findViewById(R.id.translateButton);
-                bubbleButton.setText("🔵 فعال‌سازی حباب OCR");
                 Toast.makeText(MainActivity.this, "اجازه ضبط صفحه داده نشد", Toast.LENGTH_SHORT).show();
             }
         }
