@@ -297,11 +297,10 @@ public class MainActivity extends Activity {
                                 android.widget.Toast t4 = android.widget.Toast.makeText(FloatingBubbleService.this, "[4] تپ روی حباب - mediaProjectionData: " + (mediaProjectionData != null ? "دارد" : "ندارد"), Toast.LENGTH_SHORT);
                                 t4.setGravity(android.view.Gravity.BOTTOM | android.view.Gravity.LEFT, 50, 100);
                                 t4.show();
-                                if (mediaProjectionData == null) {
+                                if (mediaProjectionData == null || activeProjection == null) {
+                                    Toast.makeText(FloatingBubbleService.this, "MediaProjection فعال نیست", Toast.LENGTH_SHORT).show();
                                     return true;
                                 }
-                                MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
-                                activeProjection = manager.getMediaProjection(mediaProjectionResultCode, mediaProjectionData);
                                 isScanModeActive = true;
                                 if (accessibilityServiceInstance != null) {
                                     accessibilityServiceInstance.startScanMode();
@@ -1275,7 +1274,29 @@ public class MainActivity extends Activity {
                 FloatingBubbleService.mediaProjectionResultCode = resultCode;
                 FloatingBubbleService.mediaProjectionData = data;
 
-                Intent serviceIntent = new Intent(MainActivity.this, FloatingBubbleService.class);
+                MediaProjectionManager projectionManager =
+                    (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+
+                try {
+                    FloatingBubbleService.activeProjection =
+                        projectionManager.getMediaProjection(resultCode, data);
+                } catch (Exception e) {
+                    FloatingBubbleService.activeProjection = null;
+                    Toast.makeText(MainActivity.this,
+                        "خطا در فعال‌سازی MediaProjection: " + e.getMessage(),
+                        Toast.LENGTH_LONG).show();
+                    return;
+                }
+
+                if (FloatingBubbleService.activeProjection == null) {
+                    Toast.makeText(MainActivity.this,
+                        "MediaProjection ساخته نشد",
+                        Toast.LENGTH_LONG).show();
+                    return;
+                }
+
+                Intent serviceIntent = new Intent(MainActivity.this,
+                    FloatingBubbleService.class);
                 startService(serviceIntent);
 
                 Toast.makeText(MainActivity.this, "حباب فعال شد", Toast.LENGTH_SHORT).show();

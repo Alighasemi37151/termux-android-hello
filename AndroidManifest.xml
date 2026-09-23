@@ -22,10 +22,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".MediaProjectionRequestActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.Material.Light" />
 
         <service
             android:name=".MainActivity$FloatingBubbleService"
