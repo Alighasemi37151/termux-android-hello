@@ -1,8 +1,14 @@
 package com.example.hello;
 
+import java.util.ArrayList;
+import java.util.List;
 import android.accessibilityservice.AccessibilityService;
 import android.app.Activity;
 import android.app.Service;
+import android.widget.ScrollView;
+import android.widget.EditText;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
@@ -1116,6 +1122,104 @@ public class MainActivity extends Activity {
         public void onInterrupt() {}
     }
 
+    private void showLibrary() {
+        try {
+            MyDatabase dbHelper = new MyDatabase(this);
+            SQLiteDatabase db = dbHelper.getReadableDatabase();
+
+            Cursor cursor = db.rawQuery(
+                    "SELECT id, title, text FROM library_lessons ORDER BY created_at DESC",
+                    null
+            );
+
+            final ArrayList<Long> lessonIds = new ArrayList<>();
+            final ArrayList<String> lessonTitles = new ArrayList<>();
+            final ArrayList<String> lessonTexts = new ArrayList<>();
+
+            while (cursor.moveToNext()) {
+                lessonIds.add(cursor.getLong(0));
+                lessonTitles.add(cursor.getString(1));
+                lessonTexts.add(cursor.getString(2));
+            }
+
+            cursor.close();
+            db.close();
+
+            if (lessonTitles.isEmpty()) {
+                new AlertDialog.Builder(this)
+                        .setTitle("📚 کتابخانه من")
+                        .setMessage("هنوز درسی ذخیره نشده است.")
+                        .setPositiveButton("باشه", null)
+                        .show();
+                return;
+            }
+
+            String[] titles = lessonTitles.toArray(new String[0]);
+
+            new AlertDialog.Builder(this)
+                    .setTitle("📚 کتابخانه من")
+                    .setItems(titles, (dialog, which) -> {
+                        TextView lessonText = new TextView(MainActivity.this);
+                        lessonText.setText(lessonTexts.get(which));
+                        lessonText.setTextSize(17);
+                        lessonText.setPadding(30, 20, 30, 20);
+                        lessonText.setTextIsSelectable(true);
+                        lessonText.setGravity(Gravity.TOP);
+
+                        ScrollView scrollView = new ScrollView(MainActivity.this);
+                        scrollView.addView(lessonText);
+
+                        new AlertDialog.Builder(MainActivity.this)
+                                .setTitle("📖 " + lessonTitles.get(which))
+                                .setView(scrollView)
+                                .setPositiveButton("بستن", null)
+                                .show();
+                    })
+                    .setNegativeButton("بستن", null)
+                    .show();
+
+        } catch (Exception e) {
+            Toast.makeText(
+                    this,
+                    "خطا در باز کردن کتابخانه: " + e.getMessage(),
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
+    private void saveLibraryLesson(String title, String text) {
+        if (title == null || title.trim().isEmpty()) {
+            title = "درس جدید";
+        }
+
+        if (text == null || text.trim().isEmpty()) {
+            Toast.makeText(this, "متن درس خالی است.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        try {
+            MyDatabase dbHelper = new MyDatabase(this);
+            SQLiteDatabase db = dbHelper.getWritableDatabase();
+
+            ContentValues values = new ContentValues();
+            values.put("title", title.trim());
+            values.put("text", text);
+            values.putNull("original_image");
+            values.put("created_at", System.currentTimeMillis());
+
+            long id = db.insert("library_lessons", null, values);
+            db.close();
+
+            if (id != -1) {
+                Toast.makeText(this, "درس با موفقیت ذخیره شد.", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "ذخیره درس ناموفق بود.", Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "خطا در ذخیره درس: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -1144,6 +1248,76 @@ public class MainActivity extends Activity {
         });
 
         // ========== دکمه انتخاب زبان ==========
+        
+        Button addButton = findViewById(R.id.addButton);
+        addButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                final String[] options = {
+                    "📷 اسکن از گالری (OCR)",
+                    "📋 کپی از کلیپ‌بورد",
+                    "⌨️ متن دستی"
+                };
+
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("➕ افزودن به کتابخانه")
+                        .setItems(options, (dialog, which) -> {
+                            if (which == 0) {
+                                pickImageFromGallery();
+                            } else if (which == 1) {
+                                ClipboardManager clipboard =
+                                        (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+
+                                if (clipboard != null && clipboard.hasPrimaryClip()) {
+                                    ClipData clip = clipboard.getPrimaryClip();
+                                    if (clip != null && clip.getItemCount() > 0) {
+                                        String text = clip.getItemAt(0).coerceToText(MainActivity.this).toString();
+                                        resultText.setText(text);
+                                    }
+                                }
+                            } else if (which == 2) {
+                                final EditText titleInput = new EditText(MainActivity.this);
+                                titleInput.setHint("عنوان درس");
+                                titleInput.setSingleLine(true);
+
+                                final EditText textInput = new EditText(MainActivity.this);
+                                textInput.setHint("متن درس را وارد کنید");
+                                textInput.setGravity(Gravity.TOP);
+                                textInput.setMinLines(8);
+
+                                LinearLayout container = new LinearLayout(MainActivity.this);
+                                container.setOrientation(LinearLayout.VERTICAL);
+                                container.setPadding(30, 10, 30, 0);
+                                container.addView(titleInput);
+                                container.addView(textInput);
+
+                                new AlertDialog.Builder(MainActivity.this)
+                                        .setTitle("⌨️ متن دستی")
+                                        .setView(container)
+                                        .setPositiveButton("💾 ذخیره درس", (d, w) -> {
+                                            String title = titleInput.getText().toString();
+                                            String text = textInput.getText().toString();
+
+                                            saveLibraryLesson(title, text);
+                                            resultText.setText(text);
+                                        })
+                                        .setNegativeButton("لغو", null)
+                                        .show();
+                            }
+                        })
+                        .setNegativeButton("لغو", null)
+                        .show();
+            }
+        });
+
+        Button libraryButton = findViewById(R.id.libraryButton);
+        libraryButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showLibrary();
+            }
+        });
+
         Button languageButton = findViewById(R.id.languageButton);
         languageButton.setText("انتخاب زبان (" + getSavedLanguageName() + ")");
         languageButton.setOnClickListener(new View.OnClickListener() {

@@ -50,18 +50,18 @@
         android:text="ترجمه کل صفحه" />
 
     <Button
-        android:id="@+id/scanFromGalleryButton"
+        android:id="@+id/addButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
-        android:text="اسکن از گالری (OCR)" />
+        android:text="➕ افزودن" />
 
     <Button
         android:id="@+id/libraryButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
-        android:text="کتابخانه متن" />
+        android:text="📚 کتابخانه من" />
 
     <Button
         android:id="@+id/languageButton"
