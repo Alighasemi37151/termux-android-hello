@@ -53,6 +53,7 @@ import android.graphics.Bitmap;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.common.InputImage;
+import android.widget.ImageButton;
 
 public class MainActivity extends Activity {
     public static Context appContext;
@@ -1126,10 +1127,11 @@ public class MainActivity extends Activity {
         try {
             MyDatabase dbHelper = new MyDatabase(this);
             SQLiteDatabase db = dbHelper.getReadableDatabase();
+            ensureLessonsTable(db);
 
             Cursor cursor = db.rawQuery(
-                    "SELECT id, title, text FROM library_lessons ORDER BY created_at DESC",
-                    null
+                "SELECT id, title, text FROM library_lessons ORDER BY created_at DESC",
+                null
             );
 
             final ArrayList<Long> lessonIds = new ArrayList<>();
@@ -1147,44 +1149,264 @@ public class MainActivity extends Activity {
 
             if (lessonTitles.isEmpty()) {
                 new AlertDialog.Builder(this)
-                        .setTitle("📚 کتابخانه من")
-                        .setMessage("هنوز درسی ذخیره نشده است.")
-                        .setPositiveButton("باشه", null)
-                        .show();
+                    .setTitle("📚 کتابخانه من")
+                    .setMessage("هنوز درسی ذخیره نشده است.")
+                    .setPositiveButton("باشه", null)
+                    .show();
                 return;
             }
 
-            String[] titles = lessonTitles.toArray(new String[0]);
+            LinearLayout root = new LinearLayout(this);
+            root.setOrientation(LinearLayout.VERTICAL);
+
+            for (int i = 0; i < lessonTitles.size(); i++) {
+                final long lessonId = lessonIds.get(i);
+                final String lessonTitle = lessonTitles.get(i);
+                final String lessonText = lessonTexts.get(i);
+
+                LinearLayout row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(30, 25, 15, 25);
+
+                TextView tv = new TextView(this);
+                tv.setText(lessonTitle);
+                tv.setTextSize(17);
+                tv.setLayoutParams(new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                tv.setOnClickListener(v -> openLesson(lessonTitle, lessonText));
+                row.addView(tv);
+
+                ImageButton menuBtn = new ImageButton(this);
+                menuBtn.setImageResource(android.R.drawable.ic_menu_more);
+                menuBtn.setBackgroundColor(0x00000000);
+                menuBtn.setOnClickListener(v ->
+                    showLessonMenu(lessonTitle, lessonText, lessonId));
+                row.addView(menuBtn);
+
+                root.addView(row);
+
+                View divider = new View(this);
+                divider.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 1));
+                divider.setBackgroundColor(0xFFE0E0E0);
+                root.addView(divider);
+            }
+
+            ScrollView scrollView = new ScrollView(this);
+            scrollView.addView(root);
 
             new AlertDialog.Builder(this)
-                    .setTitle("📚 کتابخانه من")
-                    .setItems(titles, (dialog, which) -> {
-                        TextView lessonText = new TextView(MainActivity.this);
-                        lessonText.setText(lessonTexts.get(which));
-                        lessonText.setTextSize(17);
-                        lessonText.setPadding(30, 20, 30, 20);
-                        lessonText.setTextIsSelectable(true);
-                        lessonText.setGravity(Gravity.TOP);
-
-                        ScrollView scrollView = new ScrollView(MainActivity.this);
-                        scrollView.addView(lessonText);
-
-                        new AlertDialog.Builder(MainActivity.this)
-                                .setTitle("📖 " + lessonTitles.get(which))
-                                .setView(scrollView)
-                                .setPositiveButton("بستن", null)
-                                .show();
-                    })
-                    .setNegativeButton("بستن", null)
-                    .show();
+                .setTitle("📚 کتابخانه من")
+                .setView(scrollView)
+                .setNegativeButton("بستن", null)
+                .show();
 
         } catch (Exception e) {
-            Toast.makeText(
-                    this,
-                    "خطا در باز کردن کتابخانه: " + e.getMessage(),
-                    Toast.LENGTH_LONG
-            ).show();
+            Toast.makeText(this,
+                "خطا در باز کردن کتابخانه: " + e.getMessage(),
+                Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void ensureLessonsTable(SQLiteDatabase db) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS library_lessons (" +
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+            "title TEXT NOT NULL, " +
+            "text TEXT NOT NULL, " +
+            "original_image TEXT, " +
+            "created_at INTEGER)"
+        );
+    }
+
+    private void openLesson(String title, String text) {
+        TextView lessonText = new TextView(this);
+        lessonText.setText(text);
+        lessonText.setTextSize(17);
+        lessonText.setPadding(30, 20, 30, 20);
+        lessonText.setTextIsSelectable(true);
+        lessonText.setGravity(Gravity.TOP);
+
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.addView(lessonText);
+
+        new AlertDialog.Builder(this)
+            .setTitle("📖 " + title)
+            .setView(scrollView)
+            .setPositiveButton("بستن", null)
+            .show();
+    }
+
+    private void showLessonMenu(String title, String text, long id) {
+        final String[] options = {"📋 کپی متن", "🗑 حذف درس"};
+
+        new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(options, (dialog, which) -> {
+                if (which == 0) {
+                    ClipboardManager cm =
+                        (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("lesson", text));
+                    Toast.makeText(this, "متن کپی شد", Toast.LENGTH_SHORT).show();
+                } else if (which == 1) {
+                    new AlertDialog.Builder(this)
+                        .setTitle("حذف درس")
+                        .setMessage("مطمئنی می‌خوای «" + title + "» رو حذف کنی؟")
+                        .setPositiveButton("بله، حذف کن", (d, w) -> {
+                            deleteLesson(id);
+                            Toast.makeText(this, "درس حذف شد", Toast.LENGTH_SHORT).show();
+                            showLibrary();
+                        })
+                        .setNegativeButton("لغو", null)
+                        .show();
+                }
+            })
+            .setNegativeButton("لغو", null)
+            .show();
+    }
+
+    private void deleteLesson(long id) {
+        try {
+            MyDatabase dbHelper = new MyDatabase(this);
+            SQLiteDatabase db = dbHelper.getWritableDatabase();
+            db.delete("library_lessons", "id = ?",
+                new String[]{String.valueOf(id)});
+            db.close();
+        } catch (Exception e) {
+            Toast.makeText(this, "خطا در حذف: " + e.getMessage(),
+                Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void saveLibraryLessonAutoNumber(String text, String customTitle) {
+        if (text == null || text.trim().isEmpty()) {
+            Toast.makeText(this, "متن خالی است", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        try {
+            MyDatabase dbHelper = new MyDatabase(this);
+            SQLiteDatabase db = dbHelper.getWritableDatabase();
+            ensureLessonsTable(db);
+
+            long maxId = 0;
+            Cursor c = db.rawQuery(
+                "SELECT id FROM library_lessons ORDER BY id DESC LIMIT 1", null);
+            if (c.moveToFirst()) maxId = c.getLong(0);
+            c.close();
+
+            int nextNum = (int) (maxId + 1);
+            String title;
+            if (customTitle != null && !customTitle.trim().isEmpty()) {
+                title = customTitle.trim();
+            } else {
+                title = "درس " + toPersianNumber(nextNum);
+            }
+
+            ContentValues values = new ContentValues();
+            values.put("title", title);
+            values.put("text", text.trim());
+            values.putNull("original_image");
+            values.put("created_at", System.currentTimeMillis());
+
+            long id = db.insert("library_lessons", null, values);
+            db.close();
+
+            if (id != -1) {
+                Toast.makeText(this, title + " ذخیره شد", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "ذخیره ناموفق بود", Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "خطا: " + e.getMessage(),
+                Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private String toPersianNumber(int n) {
+        String s = String.valueOf(n);
+        StringBuilder sb = new StringBuilder();
+        for (char ch : s.toCharArray()) {
+            switch (ch) {
+                case '0': sb.append('۰'); break;
+                case '1': sb.append('۱'); break;
+                case '2': sb.append('۲'); break;
+                case '3': sb.append('۳'); break;
+                case '4': sb.append('۴'); break;
+                case '5': sb.append('۵'); break;
+                case '6': sb.append('۶'); break;
+                case '7': sb.append('۷'); break;
+                case '8': sb.append('۸'); break;
+                case '9': sb.append('۹'); break;
+                default: sb.append(ch);
+            }
+        }
+        return sb.toString();
+    }
+
+    private void showEditableTextDialog(String initialText) {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(30, 20, 30, 20);
+
+        final EditText titleInput = new EditText(this);
+        titleInput.setHint("عنوان (خالی = درس بعدی)");
+        titleInput.setSingleLine(true);
+        container.addView(titleInput);
+
+        final EditText editText = new EditText(this);
+        editText.setText(initialText);
+        editText.setTextSize(16);
+        editText.setGravity(Gravity.TOP | Gravity.START);
+        editText.setMinLines(5);
+        editText.setMaxLines(12);
+        editText.setTextIsSelectable(true);
+        container.addView(editText);
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.END);
+        buttons.setPadding(0, 20, 0, 0);
+
+        final AlertDialog[] dialogHolder = new AlertDialog[1];
+
+        Button copyBtn = new Button(this);
+        copyBtn.setText("📋 کپی");
+        copyBtn.setOnClickListener(v -> {
+            ClipboardManager cm =
+                (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText(
+                "ocr", editText.getText().toString()));
+            Toast.makeText(this, "کپی شد", Toast.LENGTH_SHORT).show();
+        });
+        buttons.addView(copyBtn);
+
+        Button saveBtn = new Button(this);
+        saveBtn.setText("💾 ذخیره درس");
+        saveBtn.setOnClickListener(v -> {
+            String finalText = editText.getText().toString().trim();
+            if (finalText.isEmpty()) {
+                Toast.makeText(this, "متن خالی است", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String customTitle = titleInput.getText().toString().trim();
+            saveLibraryLessonAutoNumber(finalText, customTitle);
+            if (dialogHolder[0] != null) dialogHolder[0].dismiss();
+        });
+        buttons.addView(saveBtn);
+
+        container.addView(buttons);
+
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.addView(container);
+
+        dialogHolder[0] = new AlertDialog.Builder(this)
+            .setTitle("📝 متن")
+            .setView(scrollView)
+            .setNegativeButton("بستن", null)
+            .create();
+        dialogHolder[0].show();
     }
 
     private void saveLibraryLesson(String title, String text) {
@@ -1267,42 +1489,20 @@ public class MainActivity extends Activity {
                             } else if (which == 1) {
                                 ClipboardManager clipboard =
                                         (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-
                                 if (clipboard != null && clipboard.hasPrimaryClip()) {
                                     ClipData clip = clipboard.getPrimaryClip();
                                     if (clip != null && clip.getItemCount() > 0) {
-                                        String text = clip.getItemAt(0).coerceToText(MainActivity.this).toString();
+                                        String text = clip.getItemAt(0)
+                                                .coerceToText(MainActivity.this).toString();
                                         resultText.setText(text);
+                                        showEditableTextDialog(text);
                                     }
+                                } else {
+                                    Toast.makeText(MainActivity.this,
+                                            "کلیپ‌بورد خالیه", Toast.LENGTH_SHORT).show();
                                 }
                             } else if (which == 2) {
-                                final EditText titleInput = new EditText(MainActivity.this);
-                                titleInput.setHint("عنوان درس");
-                                titleInput.setSingleLine(true);
-
-                                final EditText textInput = new EditText(MainActivity.this);
-                                textInput.setHint("متن درس را وارد کنید");
-                                textInput.setGravity(Gravity.TOP);
-                                textInput.setMinLines(8);
-
-                                LinearLayout container = new LinearLayout(MainActivity.this);
-                                container.setOrientation(LinearLayout.VERTICAL);
-                                container.setPadding(30, 10, 30, 0);
-                                container.addView(titleInput);
-                                container.addView(textInput);
-
-                                new AlertDialog.Builder(MainActivity.this)
-                                        .setTitle("⌨️ متن دستی")
-                                        .setView(container)
-                                        .setPositiveButton("💾 ذخیره درس", (d, w) -> {
-                                            String title = titleInput.getText().toString();
-                                            String text = textInput.getText().toString();
-
-                                            saveLibraryLesson(title, text);
-                                            resultText.setText(text);
-                                        })
-                                        .setNegativeButton("لغو", null)
-                                        .show();
+                                showEditableTextDialog("");
                             }
                         })
                         .setNegativeButton("لغو", null)
@@ -1530,6 +1730,7 @@ public class MainActivity extends Activity {
                             resultText.setText("متنی در تصویر پیدا نشد.");
                         } else {
                             resultText.setText("متن استخراج شده:\n\n" + extractedText);
+                            showEditableTextDialog(extractedText);
                         }
                     })
                     .addOnFailureListener(e -> {
