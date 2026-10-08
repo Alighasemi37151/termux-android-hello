@@ -1,9 +1,9 @@
 {
-  "versionCode": 2,
-  "versionName": "1.1.0",
+  "versionCode": 1,
+  "versionName": "1.0.0",
   "bazaarUrl": "https://cafebazaar.ir/app/com.taptranslate.app",
   "myketUrl": "https://myket.ir/app/com.taptranslate.app",
   "playUrl": "",
-  "changelog": "• رفع باگ ترجمه\n• سرعت بهتر\n• حالت شب",
+  "changelog": "• نسخه اولیه\n• ترجمه با لمس کلمه\n• کتابخانه شخصی",
   "mandatory": false
 }
