@@ -12,6 +12,12 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+
+        // فقط معماری‌های arm (گوشی‌های واقعی)
+        // x86 و x86_64 حذف شدن چون فقط شبیه‌ساز ازشون استفاده می‌کنه
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
     }
 
     buildTypes {

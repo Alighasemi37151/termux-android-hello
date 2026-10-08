@@ -123,7 +123,8 @@ public class MainActivity extends Activity {
         private void loadWordsFromAssets(SQLiteDatabase db) {
             int count = 0;
             try {
-                java.io.InputStream is = context.getAssets().open("words.txt");
+                java.io.InputStream rawIs = context.getAssets().open("words.txt.gz");
+                java.io.InputStream is = new java.util.zip.GZIPInputStream(rawIs, 8192);
                 java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is), 8192);
                 String line;
                 db.beginTransaction();
@@ -1184,6 +1185,149 @@ public class MainActivity extends Activity {
 
     // ========== جستجوی کلمه ==========
 
+
+    // ═══ متدهای UI جدید ═══
+    private boolean allServicesOn = false;
+
+    private void toggleAllServices() {
+        TextView status = findViewById(R.id.statusText);
+        TextView clipStatus = findViewById(R.id.clipboardStatus);
+        TextView ocrStatus = findViewById(R.id.ocrStatus);
+
+        allServicesOn = !allServicesOn;
+
+        if (allServicesOn) {
+            // روشن: ترجمه + کیپ‌بورد
+            WordDetectionService.translationEnabled = true;
+
+            if (!ClipboardListenerService.clipboardEnabled) {
+                ClipboardListenerService.clipboardEnabled = true;
+                try {
+                    startService(new Intent(MainActivity.this, ClipboardListenerService.class));
+                } catch (Exception e) {}
+            }
+
+            if (status != null) {
+                status.setText("● روشن");
+                status.setTextColor(getResources().getColor(R.color.status_on));
+            }
+            if (clipStatus != null) {
+                clipStatus.setText("روشن");
+                clipStatus.setTextColor(getResources().getColor(R.color.status_on));
+            }
+            Toast.makeText(this, "ترجمه و کیپ‌بورد روشن شد", Toast.LENGTH_SHORT).show();
+        } else {
+            // خاموش: همه چیز
+            WordDetectionService.translationEnabled = false;
+            ClipboardListenerService.clipboardEnabled = false;
+
+            try {
+                stopService(new Intent(MainActivity.this, ClipboardListenerService.class));
+            } catch (Exception e) {}
+
+            if (status != null) {
+                status.setText("● خاموش");
+                status.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+            if (clipStatus != null) {
+                clipStatus.setText("خاموش");
+                clipStatus.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+            if (ocrStatus != null) {
+                ocrStatus.setText("خاموش");
+                ocrStatus.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+            Toast.makeText(this, "همه سرویس‌ها خاموش شد", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void toggleClipboardService() {
+        TextView status = findViewById(R.id.clipboardStatus);
+        Button clipBtn = findViewById(R.id.clipboardButton);
+        if (clipBtn != null) clipBtn.performClick();
+
+        if (status != null) {
+            if (ClipboardListenerService.clipboardEnabled) {
+                status.setText("روشن");
+                status.setTextColor(getResources().getColor(R.color.status_on));
+            } else {
+                status.setText("خاموش");
+                status.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+        }
+    }
+
+    private void toggleOcrBubble() {
+        TextView status = findViewById(R.id.ocrStatus);
+        Button bubbleBtn = findViewById(R.id.translateButton);
+        if (bubbleBtn != null) bubbleBtn.performClick();
+
+        if (status != null) {
+            if (FloatingBubbleService.activeProjection != null) {
+                status.setText("روشن");
+                status.setTextColor(getResources().getColor(R.color.status_on));
+            } else {
+                status.setText("خاموش");
+                status.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+        }
+    }
+
+    private void showTopMenu() {
+        final String[] options = {"➕ افزودن درس", "📚 کتابخانه", "🔄 چک آپدیت", "ℹ️ درباره"};
+        new AlertDialog.Builder(this)
+            .setItems(options, (d, w) -> {
+                if (w == 0) {
+                    Button addBtn = findViewById(R.id.addButton);
+                    if (addBtn != null) addBtn.performClick();
+                } else if (w == 1) {
+                    showLibrary();
+                } else if (w == 2) {
+                    getSharedPreferences("app_prefs", MODE_PRIVATE)
+                        .edit().remove("last_update_check").apply();
+                    checkForUpdates();
+                    Toast.makeText(this, "در حال چک آپدیت...", Toast.LENGTH_SHORT).show();
+                } else if (w == 3) {
+                    new AlertDialog.Builder(this)
+                        .setTitle("Tap Translate")
+                        .setMessage("نسخه 1.0.0\n\nترجمه با لمس کلمه\nکتابخانه شخصی\nمسیر کیپ‌بورد")
+                        .setPositiveButton("باشه", null)
+                        .show();
+                }
+            })
+            .setNegativeButton("بستن", null)
+            .show();
+    }
+
+    private void showSettingsMenu() {
+        final String[] options = {"🌐 انتخاب زبان", "🗑 پاک کردن همه دروس", "ℹ️ درباره"};
+        new AlertDialog.Builder(this)
+            .setItems(options, (d, w) -> {
+                if (w == 0) {
+                    Button langBtn = findViewById(R.id.languageButton);
+                    if (langBtn != null) langBtn.performClick();
+                } else if (w == 1) {
+                    new AlertDialog.Builder(this)
+                        .setMessage("مطمئنی؟ همه دروس پاک می‌شن!")
+                        .setPositiveButton("بله", (dd, ww) -> {
+                            try {
+                                MyDatabase dbHelper = new MyDatabase(this);
+                                SQLiteDatabase db = dbHelper.getWritableDatabase();
+                                db.delete("library_lessons", null, null);
+                                db.close();
+                                Toast.makeText(this, "پاک شد", Toast.LENGTH_SHORT).show();
+                            } catch (Exception e) {}
+                        })
+                        .setNegativeButton("لغو", null)
+                        .show();
+                } else if (w == 2) {
+                    showTopMenu();
+                }
+            })
+            .setNegativeButton("بستن", null)
+            .show();
+    }
+
     // ========== In-App Update ==========
     private static final String UPDATE_JSON_URL =
         "https://raw.githubusercontent.com/Alighasemi37151/termux-android-hello/main/version.json";
@@ -1902,6 +2046,36 @@ public class MainActivity extends Activity {
         
         // چک آپدیت
         checkForUpdates();
+
+        // ═══════════════════════════════════
+        // اتصال دکمه‌های UI جدید
+        // ═══════════════════════════════════
+
+        ImageButton powerButton = findViewById(R.id.powerButton);
+        powerButton.setOnClickListener(v -> toggleAllServices());
+
+        LinearLayout searchBar = findViewById(R.id.searchBar);
+        searchBar.setOnClickListener(v -> showSearchDialog());
+
+        ImageButton settingsButton = findViewById(R.id.settingsButton);
+        settingsButton.setOnClickListener(v -> showSettingsMenu());
+
+        ImageButton menuButton = findViewById(R.id.menuButton);
+        menuButton.setOnClickListener(v -> showTopMenu());
+
+        LinearLayout clipboardCard = findViewById(R.id.clipboardCard);
+        clipboardCard.setOnClickListener(v -> toggleClipboardService());
+
+        LinearLayout ocrCard = findViewById(R.id.ocrCard);
+        ocrCard.setOnClickListener(v -> toggleOcrBubble());
+
+        LinearLayout libraryCard = findViewById(R.id.libraryCard);
+        libraryCard.setOnClickListener(v -> showLibrary());
+
+        ImageButton swapLangButton = findViewById(R.id.swapLangButton);
+        swapLangButton.setOnClickListener(v ->
+            Toast.makeText(MainActivity.this, "تغییر زبان به‌زودی", Toast.LENGTH_SHORT).show());
+
 
         Button addButton = findViewById(R.id.addButton);
         addButton.setOnClickListener(new View.OnClickListener() {

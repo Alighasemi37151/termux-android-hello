@@ -1,73 +1,310 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="20dp">
+    android:background="@color/bg_dark"
+    android:fillViewport="true">
 
-    <TextView
-        android:id="@+id/resultText"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="ترجمه اینجا نمایش داده می‌شود"
-        android:textSize="16sp"
-        android:layout_marginBottom="20dp"
-        android:gravity="center" />
+        android:orientation="vertical"
+        android:padding="16dp">
 
-    <Button
-        android:id="@+id/translateButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="🔵 فعال‌سازی حباب OCR" />
+        <!-- ═══ Top Bar ═══ -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="12dp">
 
-    <Button
-        android:id="@+id/clipboardButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="📋 فعال‌سازی مسیر کپی" />
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Tap Translate"
+                android:textColor="@color/text_primary"
+                android:textSize="22sp"
+                android:textStyle="bold" />
 
-    <Button
-        android:id="@+id/stopButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="خاموش کردن همه" />
+            <ImageButton
+                android:id="@+id/menuButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_more"
+                android:tint="@color/text_primary"
+                android:contentDescription="منو" />
+        </LinearLayout>
 
-    <Button
-        android:id="@+id/toggleTranslateButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="خاموش کردن ترجمه" />
+        <!-- ═══ نوار جستجو + تنظیمات ═══ -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
 
-    <Button
-        android:id="@+id/manualTranslateButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="ترجمه کل صفحه" />
+            <LinearLayout
+                android:id="@+id/searchBar"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="@drawable/bg_card"
+                android:padding="14dp"
+                android:clickable="true"
+                android:focusable="true">
 
-    <Button
-        android:id="@+id/addButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="➕ افزودن" />
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@android:drawable/ic_menu_search"
+                    android:tint="@color/text_hint" />
 
-    <Button
-        android:id="@+id/libraryButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="📚 کتابخانه من" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="12dp"
+                    android:text="جستجوی کلمه..."
+                    android:textColor="@color/text_hint"
+                    android:textSize="15sp" />
+            </LinearLayout>
 
-    <Button
-        android:id="@+id/languageButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="انتخاب زبان (فارسی)" />
+            <ImageButton
+                android:id="@+id/settingsButton"
+                android:layout_width="50dp"
+                android:layout_height="50dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_card"
+                android:src="@android:drawable/ic_menu_preferences"
+                android:tint="@color/brand_primary_light"
+                android:contentDescription="تنظیمات" />
+        </LinearLayout>
 
-</LinearLayout>
+        <!-- ═══ کارت زبان‌ها ═══ -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_card"
+            android:padding="12dp"
+            android:layout_marginBottom="24dp">
+
+            <TextView
+                android:id="@+id/sourceLangText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="English"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:padding="8dp" />
+
+            <ImageButton
+                android:id="@+id/swapLangButton"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/bg_circle_soft"
+                android:src="@android:drawable/ic_menu_sort_by_size"
+                android:tint="@color/brand_primary_light"
+                android:contentDescription="تغییر زبان" />
+
+            <TextView
+                android:id="@+id/targetLangText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="Persian"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:padding="8dp"
+                android:clickable="true"
+                android:focusable="true" />
+        </LinearLayout>
+
+        <!-- ═══ دکمه Power ═══ -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+
+            <ImageButton
+                android:id="@+id/powerButton"
+                android:layout_width="120dp"
+                android:layout_height="120dp"
+                android:layout_gravity="center"
+                android:background="@drawable/bg_power_button"
+                android:src="@android:drawable/ic_lock_power_off"
+                android:tint="@color/text_primary"
+                android:scaleType="centerInside"
+                android:contentDescription="روشن/خاموش" />
+        </FrameLayout>
+
+        <!-- ═══ وضعیت ═══ -->
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="● خاموش"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp"
+            android:layout_marginBottom="24dp" />
+
+        <!-- ═══ کارت: مسیر کیپ‌بورد ═══ -->
+        <LinearLayout
+            android:id="@+id/clipboardCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_card"
+            android:padding="16dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:layout_marginBottom="12dp">
+
+            <ImageView
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@android:drawable/ic_menu_agenda"
+                android:tint="@color/brand_primary_light" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="مسیر کیپ‌بورد"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/clipboardStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="خاموش"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ═══ کارت: حباب OCR ═══ -->
+        <LinearLayout
+            android:id="@+id/ocrCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_card"
+            android:padding="16dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:layout_marginBottom="12dp">
+
+            <ImageView
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@android:drawable/ic_menu_camera"
+                android:tint="@color/brand_primary_light" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="حباب OCR"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/ocrStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="خاموش"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ═══ کارت: کتابخانه (تمام عرض) ═══ -->
+        <LinearLayout
+            android:id="@+id/libraryCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_card"
+            android:padding="20dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:layout_marginTop="8dp">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_menu_myplaces"
+                android:tint="@color/brand_primary_light" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="کتابخانه من"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="دروس ذخیره شده"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ═══ مخفی: دکمه‌های قدیمی برای سازگاری کد ═══ -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone">
+            <TextView android:id="@+id/resultText" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/translateButton" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/clipboardButton" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/stopButton" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/toggleTranslateButton" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/manualTranslateButton" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/addButton" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/libraryButton" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/languageButton" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <Button android:id="@+id/searchButton" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>
