@@ -54,6 +54,10 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.common.InputImage;
 import android.widget.ImageButton;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageInfo;
+import android.view.inputmethod.EditorInfo;
+import android.text.InputType;
 
 public class MainActivity extends Activity {
     public static Context appContext;
@@ -179,6 +183,14 @@ public class MainActivity extends Activity {
         private Runnable hidePopupRunnable;
         private String lastTranslatedWord = "";
 
+        // برای مدیریت لمس حباب
+        private Runnable longPressRunnable;
+        private Runnable singleTapRunnable;
+        private boolean isLongPressTriggered = false;
+        private long lastTapTime = 0;
+        private static final long LONG_PRESS_MS = 500;
+        private static final long DOUBLE_TAP_MS = 300;
+
         @Override
         public void onCreate() {
             super.onCreate();
@@ -245,27 +257,63 @@ public class MainActivity extends Activity {
                             initialTouchX = event.getRawX();
                             initialTouchY = event.getRawY();
                             isDrag = false;
+                            isLongPressTriggered = false;
+
+                            // لانگ پرس → باز کردن اپ
+                            longPressRunnable = new Runnable() {
+                                @Override
+                                public void run() {
+                                    isLongPressTriggered = true;
+                                    openApp();
+                                }
+                            };
+                            handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
                             return true;
+
                         case MotionEvent.ACTION_MOVE:
                             int dx = (int) (event.getRawX() - initialTouchX);
                             int dy = (int) (event.getRawY() - initialTouchY);
                             if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
                                 isDrag = true;
+                                if (longPressRunnable != null) {
+                                    handler.removeCallbacks(longPressRunnable);
+                                }
                                 params.x = initialX + dx;
                                 params.y = initialY + dy;
                                 windowManager.updateViewLayout(bubbleView, params);
                             }
                             return true;
+
                         case MotionEvent.ACTION_UP:
-                            if (!isDrag) {
-                                // Tap → اسکن
-                                if (mediaProjectionData == null || activeProjection == null) {
-                                    Toast.makeText(FloatingBubbleService.this, "MediaProjection فعال نیست", Toast.LENGTH_SHORT).show();
-                                    return true;
-                                }
-                                isScanModeActive = true;
-                                if (accessibilityServiceInstance != null) {
-                                    accessibilityServiceInstance.startScanMode();
+                            if (longPressRunnable != null) {
+                                handler.removeCallbacks(longPressRunnable);
+                            }
+
+                            if (!isDrag && !isLongPressTriggered) {
+                                long now = System.currentTimeMillis();
+                                if (now - lastTapTime < DOUBLE_TAP_MS) {
+                                    // دابل تب → خاموش کردن حباب
+                                    if (singleTapRunnable != null) {
+                                        handler.removeCallbacks(singleTapRunnable);
+                                    }
+                                    Toast.makeText(FloatingBubbleService.this, "حباب خاموش شد", Toast.LENGTH_SHORT).show();
+                                    stopSelf();
+                                } else {
+                                    lastTapTime = now;
+                                    singleTapRunnable = new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (mediaProjectionData == null || activeProjection == null) {
+                                                Toast.makeText(FloatingBubbleService.this, "MediaProjection فعال نیست", Toast.LENGTH_SHORT).show();
+                                                return;
+                                            }
+                                            isScanModeActive = true;
+                                            if (accessibilityServiceInstance != null) {
+                                                accessibilityServiceInstance.startScanMode();
+                                            }
+                                        }
+                                    };
+                                    handler.postDelayed(singleTapRunnable, DOUBLE_TAP_MS);
                                 }
                             }
                             return true;
@@ -342,8 +390,18 @@ public class MainActivity extends Activity {
             return START_NOT_STICKY;
         }
 
+        private void openApp() {
+            try {
+                Intent intent = new Intent(FloatingBubbleService.this, MainActivity.class);
+                intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(intent);
+            } catch (Exception e) {}
+        }
+
         public void onDestroy() {
             super.onDestroy();
+            if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable);
+            if (singleTapRunnable != null) handler.removeCallbacks(singleTapRunnable);
             if (bubbleView != null) windowManager.removeView(bubbleView);
             if (popupView != null) windowManager.removeView(popupView);
         }
@@ -1123,6 +1181,377 @@ public class MainActivity extends Activity {
         public void onInterrupt() {}
     }
 
+
+    // ========== جستجوی کلمه ==========
+
+    // ========== In-App Update ==========
+    private static final String UPDATE_JSON_URL =
+        "https://raw.githubusercontent.com/Alighasemi37151/termux-android-hello/main/version.json";
+    private static final long UPDATE_CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000; // 24h
+
+    private void checkForUpdates() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    SharedPreferences prefs =
+                        getSharedPreferences("app_prefs", MODE_PRIVATE);
+                    long lastCheck = prefs.getLong("last_update_check", 0);
+                    long now = System.currentTimeMillis();
+                    if (now - lastCheck < UPDATE_CHECK_INTERVAL_MS) return;
+
+                    java.net.URL url = new java.net.URL(UPDATE_JSON_URL);
+                    java.net.HttpURLConnection conn =
+                        (java.net.HttpURLConnection) url.openConnection();
+                    conn.setConnectTimeout(5000);
+                    conn.setReadTimeout(5000);
+                    conn.setRequestProperty("User-Agent", "TapTranslate");
+
+                    java.io.BufferedReader reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(conn.getInputStream()));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) sb.append(line);
+                    reader.close();
+
+                    String json = sb.toString();
+
+                    int serverVersionCode = extractJsonInt(json, "versionCode");
+                    String serverVersionName = extractJsonString(json, "versionName");
+                    final String bazaarUrl = extractJsonString(json, "bazaarUrl");
+                    final String myketUrl = extractJsonString(json, "myketUrl");
+                    final String playUrl = extractJsonString(json, "playUrl");
+                    final String changelog = extractJsonString(json, "changelog");
+                    boolean mandatory = extractJsonBoolean(json, "mandatory");
+
+                    prefs.edit().putLong("last_update_check", now).apply();
+
+                    if (serverVersionCode <= 0) return;
+
+                    PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+                    int currentVersion = info.versionCode;
+
+                    if (serverVersionCode > currentVersion) {
+                        final String svn = serverVersionName;
+                        final boolean fm = mandatory;
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                showUpdateDialog(svn, changelog, bazaarUrl, myketUrl, playUrl, fm);
+                            }
+                        });
+                    }
+                } catch (Exception e) {
+                    // silent
+                }
+            }
+        }).start();
+    }
+
+    private int extractJsonInt(String json, String key) {
+        try {
+            String p = "\"" + key + "\"";
+            int i = json.indexOf(p);
+            if (i == -1) return 0;
+            int j = json.indexOf(":", i) + 1;
+            int k = j;
+            while (k < json.length() && (Character.isDigit(json.charAt(k)) || json.charAt(k) == ' ')) k++;
+            return Integer.parseInt(json.substring(j, k).trim());
+        } catch (Exception e) { return 0; }
+    }
+
+    private String extractJsonString(String json, String key) {
+        try {
+            String p = "\"" + key + "\"";
+            int i = json.indexOf(p);
+            if (i == -1) return "";
+            int j = json.indexOf("\"", json.indexOf(":", i) + 1) + 1;
+            StringBuilder sb = new StringBuilder();
+            int k = j;
+            while (k < json.length()) {
+                char c = json.charAt(k);
+                if (c == '\\' && k + 1 < json.length()) {
+                    char n = json.charAt(k + 1);
+                    if (n == 'n') { sb.append('\n'); k += 2; continue; }
+                    if (n == 't') { sb.append('\t'); k += 2; continue; }
+                    if (n == '"') { sb.append('"'); k += 2; continue; }
+                    if (n == '\\') { sb.append('\\'); k += 2; continue; }
+                }
+                if (c == '"') break;
+                sb.append(c);
+                k++;
+            }
+            return sb.toString();
+        } catch (Exception e) { return ""; }
+    }
+
+    private boolean extractJsonBoolean(String json, String key) {
+        try {
+            String p = "\"" + key + "\"";
+            int i = json.indexOf(p);
+            if (i == -1) return false;
+            int j = json.indexOf(":", i) + 1;
+            return json.substring(j).trim().startsWith("true");
+        } catch (Exception e) { return false; }
+    }
+
+    private void showUpdateDialog(String versionName, String changelog,
+        final String bazaarUrl, final String myketUrl, final String playUrl,
+        boolean mandatory) {
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(30, 20, 30, 20);
+
+        TextView vText = new TextView(this);
+        vText.setText("نسخه جدید: " + versionName);
+        vText.setTextSize(15);
+        container.addView(vText);
+
+        TextView cTitle = new TextView(this);
+        cTitle.setText("\nتغییرات:");
+        cTitle.setTextSize(14);
+        container.addView(cTitle);
+
+        TextView cText = new TextView(this);
+        cText.setText(changelog);
+        cText.setTextSize(14);
+        cText.setPadding(0, 10, 0, 20);
+        container.addView(cText);
+
+        if (bazaarUrl != null && !bazaarUrl.isEmpty()) {
+            Button b = new Button(this);
+            b.setText("📦 دانلود از کافه‌بازار");
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) { openUrl(bazaarUrl); }
+            });
+            container.addView(b);
+        }
+        if (myketUrl != null && !myketUrl.isEmpty()) {
+            Button b = new Button(this);
+            b.setText("📦 دانلود از مایکت");
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) { openUrl(myketUrl); }
+            });
+            container.addView(b);
+        }
+        if (playUrl != null && !playUrl.isEmpty()) {
+            Button b = new Button(this);
+            b.setText("📦 دانلود از Google Play");
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) { openUrl(playUrl); }
+            });
+            container.addView(b);
+        }
+
+        ScrollView sv = new ScrollView(this);
+        sv.addView(container);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle("🎉 نسخه جدید آماده‌ست")
+            .setView(sv)
+            .setCancelable(!mandatory);
+
+        if (!mandatory) {
+            builder.setNegativeButton("بعداً", null);
+        }
+
+        builder.show();
+    }
+
+    private void openUrl(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "خطا در باز کردن لینک", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void showSearchDialog() {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(30, 20, 30, 20);
+
+        final EditText input = new EditText(this);
+        input.setHint("کلمه انگلیسی...");
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        container.addView(input);
+
+        final TextView result = new TextView(this);
+        result.setTextSize(16);
+        result.setPadding(0, 30, 0, 30);
+        result.setTextIsSelectable(true);
+        container.addView(result);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.END);
+
+        final Button copyBtn = new Button(this);
+        copyBtn.setText("📋 کپی");
+        copyBtn.setVisibility(View.GONE);
+        copyBtn.setOnClickListener(v -> {
+            String t = result.getText().toString();
+            if (!t.isEmpty()) {
+                ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                cm.setPrimaryClip(ClipData.newPlainText("word", t));
+                Toast.makeText(this, "کپی شد", Toast.LENGTH_SHORT).show();
+            }
+        });
+        actions.addView(copyBtn);
+        container.addView(actions);
+
+        ScrollView sv = new ScrollView(this);
+        sv.addView(container);
+
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("🔍 جستجوی کلمه")
+            .setView(sv)
+            .setPositiveButton("جستجو", null)
+            .setNegativeButton("بستن", null)
+            .create();
+        dialog.show();
+
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH
+                || actionId == EditorInfo.IME_ACTION_DONE) {
+                doSearch(input, result, copyBtn);
+                return true;
+            }
+            return false;
+        });
+
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v ->
+            doSearch(input, result, copyBtn));
+    }
+
+    private void doSearch(final EditText input, final TextView result, final Button copyBtn) {
+        final String word = input.getText().toString().trim().toLowerCase();
+        if (word.isEmpty()) {
+            result.setText("کلمه‌ای وارد کن");
+            copyBtn.setVisibility(View.GONE);
+            return;
+        }
+
+        result.setText("در حال جستجو...");
+        copyBtn.setVisibility(View.GONE);
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String meaning = null;
+                String source = "";
+
+                String g = searchGoogleTranslation(word);
+                if (g != null && !g.isEmpty() && !g.equals(word)) {
+                    meaning = g;
+                    source = "🌐 Google Translate";
+                }
+
+                if (meaning == null) {
+                    String m = searchMyMemoryTranslation(word);
+                    if (m != null && !m.isEmpty() && !m.equals(word)) {
+                        meaning = m;
+                        source = "🌐 MyMemory";
+                    }
+                }
+
+                if (meaning == null) {
+                    try {
+                        MyDatabase db = new MyDatabase(MainActivity.this);
+                        String d = db.getMeaning(word);
+                        if (d != null && !d.isEmpty()) {
+                            meaning = d;
+                            source = "📚 دیتابیس محلی";
+                        }
+                    } catch (Exception e) {}
+                }
+
+                final String fm = meaning;
+                final String fs = source;
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (fm == null) {
+                            result.setText("معنی پیدا نشد");
+                            copyBtn.setVisibility(View.GONE);
+                        } else {
+                            result.setText(fm + "\n\n" + fs);
+                            copyBtn.setVisibility(View.VISIBLE);
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private String searchGoogleTranslation(String word) {
+        try {
+            String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl="
+                + getSavedLanguage() + "&dt=t&q="
+                + java.net.URLEncoder.encode(word, "UTF-8");
+            java.net.URL obj = new java.net.URL(url);
+            java.net.HttpURLConnection conn =
+                (java.net.HttpURLConnection) obj.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(conn.getInputStream()));
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) response.append(line);
+            reader.close();
+            String json = response.toString();
+            int start = json.indexOf("[[[\"");
+            if (start == -1) return null;
+            start += 4;
+            int end = json.indexOf("\"", start);
+            if (end == -1) return null;
+            return json.substring(start, end).replace("\\u200c", "\u200c");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String searchMyMemoryTranslation(String word) {
+        try {
+            String langPair = "en|" + getSavedLanguage();
+            String url = "https://api.mymemory.translated.net/get?q="
+                + java.net.URLEncoder.encode(word, "UTF-8")
+                + "&langpair=" + langPair;
+            java.net.URL obj = new java.net.URL(url);
+            java.net.HttpURLConnection conn =
+                (java.net.HttpURLConnection) obj.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(conn.getInputStream()));
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) response.append(line);
+            reader.close();
+            String json = response.toString();
+            String key = "\"translatedText\":\"";
+            int start = json.indexOf(key);
+            if (start == -1) return null;
+            start += key.length();
+            int end = json.indexOf("\"", start);
+            if (end == -1) return null;
+            return json.substring(start, end);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private void showLibrary() {
         try {
             MyDatabase dbHelper = new MyDatabase(this);
@@ -1471,6 +1900,9 @@ public class MainActivity extends Activity {
 
         // ========== دکمه انتخاب زبان ==========
         
+        // چک آپدیت
+        checkForUpdates();
+
         Button addButton = findViewById(R.id.addButton);
         addButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -1507,6 +1939,14 @@ public class MainActivity extends Activity {
                         })
                         .setNegativeButton("لغو", null)
                         .show();
+            }
+        });
+
+        Button searchButton = findViewById(R.id.searchButton);
+        searchButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showSearchDialog();
             }
         });
 
