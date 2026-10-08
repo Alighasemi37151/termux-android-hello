@@ -1005,7 +1005,7 @@ public class MainActivity extends Activity {
         // ========== ترجمه با MyMemory (API جایگزین) ==========
         public String getMyMemoryTranslation(String word) {
             try {
-                String langPair = "en|" + getSavedLanguage();
+                String langPair = getSavedSourceLang() + "|" + getSavedLanguage();
                 String url = "https://api.mymemory.translated.net/get?q=" +
                         java.net.URLEncoder.encode(word, "UTF-8") +
                         "&langpair=" + java.net.URLEncoder.encode(langPair, "UTF-8");
@@ -1667,7 +1667,7 @@ public class MainActivity extends Activity {
 
     private String searchMyMemoryTranslation(String word) {
         try {
-            String langPair = "en|" + getSavedLanguage();
+            String langPair = getSavedSourceLang() + "|" + getSavedLanguage();
             String url = "https://api.mymemory.translated.net/get?q="
                 + java.net.URLEncoder.encode(word, "UTF-8")
                 + "&langpair=" + langPair;
@@ -2073,8 +2073,20 @@ public class MainActivity extends Activity {
         libraryCard.setOnClickListener(v -> showLibrary());
 
         ImageButton swapLangButton = findViewById(R.id.swapLangButton);
-        swapLangButton.setOnClickListener(v ->
-            Toast.makeText(MainActivity.this, "تغییر زبان به‌زودی", Toast.LENGTH_SHORT).show());
+        swapLangButton.setOnClickListener(v -> swapLanguages());
+
+        // کارت زبان‌ها: کلیک روی مبدأ و مقصد
+        TextView srcLangText = findViewById(R.id.sourceLangText);
+        if (srcLangText != null) {
+            srcLangText.setOnClickListener(v -> showSourceLangDialog());
+        }
+        TextView tgtLangText = findViewById(R.id.targetLangText);
+        if (tgtLangText != null) {
+            tgtLangText.setOnClickListener(v -> showLanguageDialog(null));
+        }
+
+        // نمایش اولیه زبان‌ها
+        updateLanguageUI();
 
 
         Button addButton = findViewById(R.id.addButton);
@@ -2227,41 +2239,128 @@ public class MainActivity extends Activity {
     // ========== متدهای انتخاب زبان ==========
     private static final String PREFS_NAME = "app_prefs";
     private static final String KEY_LANGUAGE = "selected_language";
+    private static final String KEY_SOURCE_LANG = "selected_source_language";
+
+    // لیست زبان‌ها: {code, نام بومی, کد ۲حرفی}
+    public static final String[][] LANGUAGES = {
+        {"en", "English",   "EN"},
+        {"fa", "فارسی",     "FA"},
+        {"ar", "العربية",   "AR"},
+        {"tr", "Türkçe",    "TR"},
+        {"fr", "Français",  "FR"},
+        {"de", "Deutsch",   "DE"},
+        {"es", "Español",   "ES"},
+        {"ru", "Русский",   "RU"},
+        {"zh", "中文",       "ZH"},
+        {"ja", "日本語",     "JA"},
+        {"ko", "한국어",     "KO"},
+        {"hi", "हिन्दी",     "HI"},
+        {"it", "Italiano",  "IT"},
+        {"pt", "Português", "PT"}
+    };
 
     public static String getSavedLanguage() {
         SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         return prefs.getString(KEY_LANGUAGE, "fa");
     }
 
+    public static String getSavedSourceLang() {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        return prefs.getString(KEY_SOURCE_LANG, "en");
+    }
+
+    public static void setSavedLanguage(String code) {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prefs.edit().putString(KEY_LANGUAGE, code).apply();
+    }
+
+    public static void setSavedSourceLang(String code) {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prefs.edit().putString(KEY_SOURCE_LANG, code).apply();
+    }
+
+    public static String getLanguageName(String code) {
+        for (String[] lang : LANGUAGES) {
+            if (lang[0].equals(code)) return lang[1];
+        }
+        return code;
+    }
+
+    public static String getLanguageShort(String code) {
+        for (String[] lang : LANGUAGES) {
+            if (lang[0].equals(code)) return lang[2];
+        }
+        return code.toUpperCase();
+    }
+
     public static String getSavedLanguageName() {
-        String code = getSavedLanguage();
-        switch (code) {
-            case "fa": return "فارسی";
-            case "en": return "انگلیسی";
-            case "de": return "آلمانی";
-            case "fr": return "فرانسوی";
-            case "tr": return "ترکی";
-            case "zh": return "چینی";
-            default: return "فارسی";
+        return getLanguageName(getSavedLanguage());
+    }
+
+    public static String getSavedSourceLangName() {
+        return getLanguageName(getSavedSourceLang());
+    }
+
+    // انتخاب زبان مقصد
+    private void showLanguageDialog(final Button languageButton) {
+        final String[] names = new String[LANGUAGES.length];
+        for (int i = 0; i < LANGUAGES.length; i++) {
+            names[i] = LANGUAGES[i][2] + "  " + LANGUAGES[i][1];
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("زبان مقصد")
+            .setItems(names, (dialog, which) -> {
+                String code = LANGUAGES[which][0];
+                setSavedLanguage(code);
+                updateLanguageUI();
+                Toast.makeText(MainActivity.this,
+                    "مقصد: " + LANGUAGES[which][1], Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("لغو", null)
+            .show();
+    }
+
+    // انتخاب زبان مبدأ
+    private void showSourceLangDialog() {
+        final String[] names = new String[LANGUAGES.length];
+        for (int i = 0; i < LANGUAGES.length; i++) {
+            names[i] = LANGUAGES[i][2] + "  " + LANGUAGES[i][1];
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("زبان مبدأ")
+            .setItems(names, (dialog, which) -> {
+                String code = LANGUAGES[which][0];
+                setSavedSourceLang(code);
+                updateLanguageUI();
+                Toast.makeText(MainActivity.this,
+                    "مبدأ: " + LANGUAGES[which][1], Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("لغو", null)
+            .show();
+    }
+
+    // به‌روزرسانی نمایش زبان‌ها
+    private void updateLanguageUI() {
+        TextView srcText = findViewById(R.id.sourceLangText);
+        TextView tgtText = findViewById(R.id.targetLangText);
+        if (srcText != null) {
+            srcText.setText(getLanguageShort(getSavedSourceLang()) + "  " + getSavedSourceLangName());
+        }
+        if (tgtText != null) {
+            tgtText.setText(getLanguageShort(getSavedLanguage()) + "  " + getSavedLanguageName());
         }
     }
 
-    private void showLanguageDialog(final Button languageButton) {
-        final String[] languages = {"فارسی", "انگلیسی", "آلمانی", "فرانسوی", "ترکی", "چینی"};
-        final String[] codes = {"fa", "en", "de", "fr", "tr", "zh"};
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("انتخاب زبان ترجمه");
-        builder.setItems(languages, new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-                prefs.edit().putString(KEY_LANGUAGE, codes[which]).apply();
-                languageButton.setText("انتخاب زبان (" + languages[which] + ")");
-                Toast.makeText(MainActivity.this, "زبان به " + languages[which] + " تغییر کرد", Toast.LENGTH_SHORT).show();
-            }
-        });
-        builder.show();
+    // جابجایی زبان‌ها
+    private void swapLanguages() {
+        String src = getSavedSourceLang();
+        String tgt = getSavedLanguage();
+        setSavedSourceLang(tgt);
+        setSavedLanguage(src);
+        updateLanguageUI();
+        Toast.makeText(this, "زبان‌ها جابجا شد", Toast.LENGTH_SHORT).show();
     }
 
 
@@ -2405,7 +2504,7 @@ public class MainActivity extends Activity {
         // ========== ترجمه با MyMemory (API جایگزین) ==========
         public String getMyMemoryTranslation(String word) {
             try {
-                String langPair = "en|" + getSavedLanguage();
+                String langPair = getSavedSourceLang() + "|" + getSavedLanguage();
                 String url = "https://api.mymemory.translated.net/get?q=" +
                         java.net.URLEncoder.encode(word, "UTF-8") +
                         "&langpair=" + java.net.URLEncoder.encode(langPair, "UTF-8");
