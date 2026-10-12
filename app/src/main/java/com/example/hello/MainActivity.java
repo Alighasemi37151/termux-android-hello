@@ -667,7 +667,7 @@ public class MainActivity extends Activity {
 
         // ========== ترجمه کلمه پیدا شده ==========
         private void translateDetectedWord(String word) {
-            final String cleanWord = word.toLowerCase().replaceAll("[^a-z]", "");
+            final String cleanWord = smartClean(word);
             if (cleanWord.isEmpty()) return;
 
             new Thread(new Runnable() {
@@ -676,6 +676,10 @@ public class MainActivity extends Activity {
                     String meaning = getGoogleTranslation(cleanWord);
                     if (meaning == null || meaning.isEmpty() || meaning.equals(cleanWord)) {
                         meaning = getMyMemoryTranslation(cleanWord);
+                    }
+                    if (meaning == null || meaning.isEmpty() || meaning.equals(cleanWord)) {
+                        meaning = translateOffline(WordDetectionService.this, cleanWord,
+                            getSavedSourceLang(), getSavedLanguage());
                     }
                     if (meaning == null || meaning.isEmpty() || meaning.equals(cleanWord)) {
                         meaning = db.getMeaning(cleanWord);
@@ -728,7 +732,7 @@ public class MainActivity extends Activity {
                             if (!copied.isEmpty() && !copied.equals(lastClipboard)) {
                                 lastClipboard = copied;
                                 if (!translationEnabled) return;
-                                String cleanWord = copied.toLowerCase().replaceAll("[^a-z]", "");
+                                String cleanWord = smartClean(copied);
                                 if (!cleanWord.isEmpty() && cleanWord.length() > 1) {
                                     // اگه کلمه کوتاهه، مثل قبل
                                     if (cleanWord.length() <= 25) {
@@ -763,13 +767,19 @@ public class MainActivity extends Activity {
                         @Override
                         public void run() {
                             if (finalG != null && finalG.length() > 0) {
-                                // گوگل جواب داد
                                 showPopupOnUI(word, finalG);
                             } else {
-                                // گوگل جواب نداد، از دیتابیس استفاده کن
-                                String dbMeaning = db.getMeaning(word);
-                                if (dbMeaning != null) {
-                                    showPopupOnUI(word, dbMeaning);
+                                // آفلاین با ML Kit
+                                String mlResult = translateOffline(
+                                    WordDetectionService.this, word,
+                                    getSavedSourceLang(), getSavedLanguage());
+                                if (mlResult != null && !mlResult.isEmpty() && !mlResult.equals(word)) {
+                                    showPopupOnUI(word, mlResult);
+                                } else {
+                                    String dbMeaning = db.getMeaning(word);
+                                    if (dbMeaning != null) {
+                                        showPopupOnUI(word, dbMeaning);
+                                    }
                                 }
                             }
                         }
@@ -965,7 +975,7 @@ public class MainActivity extends Activity {
 
         public String getGoogleTranslation(String word) {
             try {
-                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=" + getSavedLanguage() + "&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
+                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" + getSavedSourceLang() + "&tl=" + getSavedLanguage() + "&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
                 android.util.Log.d("GOOGLE", "URL: " + url);
                 java.net.URL obj = new java.net.URL(url);
                 java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
@@ -1300,13 +1310,15 @@ public class MainActivity extends Activity {
     }
 
     private void showSettingsMenu() {
-        final String[] options = {"🌐 انتخاب زبان", "🗑 پاک کردن همه دروس", "ℹ️ درباره"};
+        final String[] options = {"📖 راهنمای استفاده", "🌐 انتخاب زبان", "🗑 پاک کردن همه دروس", "ℹ️ درباره"};
         new AlertDialog.Builder(this)
             .setItems(options, (d, w) -> {
                 if (w == 0) {
+                    resetOnboarding();
+                } else if (w == 1) {
                     Button langBtn = findViewById(R.id.languageButton);
                     if (langBtn != null) langBtn.performClick();
-                } else if (w == 1) {
+                } else if (w == 2) {
                     new AlertDialog.Builder(this)
                         .setMessage("مطمئنی؟ همه دروس پاک می‌شن!")
                         .setPositiveButton("بله", (dd, ww) -> {
@@ -1320,7 +1332,7 @@ public class MainActivity extends Activity {
                         })
                         .setNegativeButton("لغو", null)
                         .show();
-                } else if (w == 2) {
+                } else if (w == 3) {
                     showTopMenu();
                 }
             })
@@ -1515,6 +1527,162 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ═══ راهنمای استفاده ═══
+    private static final String KEY_ONBOARDING_SHOWN = "onboarding_shown";
+
+    private void showOnboardingIfFirstTime() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean shown = prefs.getBoolean(KEY_ONBOARDING_SHOWN, false);
+        if (!shown) {
+            showOnboarding(1);
+        }
+    }
+
+    private void showOnboarding(final int step) {
+        String title = "";
+        String content = "";
+
+        if (step == 1) {
+            title = "📷 حباب شناور";
+            content = "برای ترجمه فوری روی هر صفحه:\n\n" +
+                "• دکمه گرد وسط رو بزن تا حباب روشن شه\n" +
+                "• روی هر کلمه انگلیسی روی صفحه لمس کن\n" +
+                "• معنی فارسی فوری نمایش داده می‌شه\n\n" +
+                "💡 نکات:\n" +
+                "• تک کلیک روی حباب: اسکن صفحه\n" +
+                "• نگه داشتن: باز شدن اپ\n" +
+                "• دابل کلیک: خاموش کردن حباب\n" +
+                "• کشیدن: جابجایی حباب\n\n" +
+                "🎁 محتویات: هر متنی که کپی کنی، خودکار ترجمه می‌شه!";
+        } else if (step == 2) {
+            title = "📋 مسیر کیپ‌بورد";
+            content = "ترجمه خودکار هر چیزی که کپی کنی:\n\n" +
+                "• کارت «مسیر کیپ‌بورد» رو بزن\n" +
+                "• حالا هر متن انگلیسی که کپی کنی\n" +
+                "• معنی فارسی فوری نمایش داده می‌شه\n\n" +
+                "💡 کاربرد:\n" +
+                "• از مرورگر متن کپی کن\n" +
+                "• از واتساپ، تلگرام\n" +
+                "• از هر اپی";
+        } else if (step == 3) {
+            title = "📚 کتابخانه و جستجو";
+            content = "ذخیره متن‌ها و جستجوی کلمات:\n\n" +
+                "📚 کتابخانه:\n" +
+                "• روی کارت کتابخانه بزن\n" +
+                "• از گالری عکس بگیر (OCR)\n" +
+                "• یا متن دستی بنویس\n" +
+                "• درس‌ها با شماره ذخیره می‌شن\n\n" +
+                "🔍 جستجو:\n" +
+                "• نوار جستجو رو بزن\n" +
+                "• کلمه بنویس، Enter بزن\n" +
+                "• معنی + منبع نمایش داده می‌شه\n\n" +
+                "🌐 تغییر زبان:\n" +
+                "• کارت زبان‌ها رو بزن\n" +
+                "• ۱۴ زبان در دسترس\n" +
+                "• دکمه ⇄ جابجایی";
+        }
+
+        final int currentStep = step;
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(content)
+            .setCancelable(false);
+
+        if (step < 3) {
+            builder.setPositiveButton("بعدی →", (d, w) -> showOnboarding(currentStep + 1));
+            builder.setNegativeButton("رد کردن", (d, w) -> markOnboardingShown());
+        } else {
+            builder.setPositiveButton("شروع استفاده ✅", (d, w) -> markOnboardingShown());
+            builder.setNegativeButton("بعداً", (d, w) -> markOnboardingShown());
+        }
+
+        AlertDialog dialog = builder.create();
+        dialog.show();
+
+        // رنگ دکمه‌ها
+        try {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(
+                getResources().getColor(R.color.brand_primary_light));
+            if (dialog.getButton(AlertDialog.BUTTON_NEGATIVE) != null) {
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(
+                    getResources().getColor(R.color.text_secondary));
+            }
+        } catch (Exception e) {}
+    }
+
+    private void markOnboardingShown() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prefs.edit().putBoolean(KEY_ONBOARDING_SHOWN, true).apply();
+    }
+
+    private void resetOnboarding() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prefs.edit().putBoolean(KEY_ONBOARDING_SHOWN, false).apply();
+        showOnboarding(1);
+    }
+
+    // ═══ چک دانلود مدل ML Kit برای زبان انتخاب شده ═══
+    private void checkAndPromptModelDownload(final String src, final String tgt) {
+        if (!OfflineTranslator.isGmsAvailable(this)) {
+            return; // GMS نیست، هیچی نگو
+        }
+        OfflineTranslator.isModelDownloaded(this, src, tgt, new OfflineTranslator.ModelStatusCallback() {
+            @Override
+            public void onStatus(boolean isDownloaded) {
+                if (isDownloaded) return;
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        String srcName = getLanguageName(src);
+                        String tgtName = getLanguageName(tgt);
+
+                        new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("📥 دانلود مدل آفلاین")
+                            .setMessage("برای ترجمه آفلاین از " + srcName + " به " + tgtName +
+                                " نیاز به دانلود مدل (حدود ۳۰ مگ) داریم.\n\n" +
+                                "این کار یک بار انجام می‌شه و بعد از اون آفلاین کار می‌کنه.")
+                            .setPositiveButton("دانلود", (d, w) -> downloadOfflineModel(src, tgt))
+                            .setNegativeButton("بعداً", null)
+                            .show();
+                    }
+                });
+            }
+        });
+    }
+
+    private void downloadOfflineModel(final String src, final String tgt) {
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setTitle("در حال دانلود...");
+        pd.setMessage("لطفاً صبر کن");
+        pd.setCancelable(false);
+        pd.setProgressStyle(android.app.ProgressDialog.STYLE_SPINNER);
+        pd.show();
+
+        OfflineTranslator.downloadModel(this, src, tgt, new OfflineTranslator.DownloadCallback() {
+            @Override
+            public void onProgress(int percent) {
+                pd.setMessage("دانلود: " + percent + "%");
+            }
+
+            @Override
+            public void onSuccess() {
+                pd.dismiss();
+                Toast.makeText(MainActivity.this,
+                    "✅ مدل دانلود شد! حالا آفلاین کار می‌کنه",
+                    Toast.LENGTH_LONG).show();
+            }
+
+            @Override
+            public void onFailure(final String error) {
+                pd.dismiss();
+                Toast.makeText(MainActivity.this,
+                    "❌ دانلود ناموفق: " + error,
+                    Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
     private void showSearchDialog() {
         LinearLayout container = new LinearLayout(this);
         container.setOrientation(LinearLayout.VERTICAL);
@@ -1553,8 +1721,9 @@ public class MainActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         sv.addView(container);
 
+        String langInfo = getLanguageShort(getSavedSourceLang()) + " → " + getLanguageShort(getSavedLanguage());
         final AlertDialog dialog = new AlertDialog.Builder(this)
-            .setTitle("🔍 جستجوی کلمه")
+            .setTitle("🔍 جستجو (" + langInfo + ")")
             .setView(sv)
             .setPositiveButton("جستجو", null)
             .setNegativeButton("بستن", null)
@@ -1606,6 +1775,40 @@ public class MainActivity extends Activity {
                 }
 
                 if (meaning == null) {
+                    // تلاش ML Kit (آفلاین)
+                    final String[] mlResult = {null};
+                    final Object lock = new Object();
+                    final String w = word;
+                    final String sLang = getSavedSourceLang();
+                    final String tLang = getSavedLanguage();
+
+                    OfflineTranslator.translate(MainActivity.this, w, sLang, tLang,
+                        new OfflineTranslator.Callback() {
+                            @Override
+                            public void onSuccess(String translated) {
+                                synchronized (lock) {
+                                    mlResult[0] = translated;
+                                    lock.notify();
+                                }
+                            }
+                            @Override
+                            public void onFailure(String error) {
+                                synchronized (lock) {
+                                    lock.notify();
+                                }
+                            }
+                        });
+
+                    synchronized (lock) {
+                        try { lock.wait(3000); } catch (InterruptedException e) {}
+                    }
+                    if (mlResult[0] != null && !mlResult[0].isEmpty() && !mlResult[0].equals(word)) {
+                        meaning = mlResult[0];
+                        source = "📱 آفلاین (ML Kit)";
+                    }
+                }
+
+                if (meaning == null) {
                     try {
                         MyDatabase db = new MyDatabase(MainActivity.this);
                         String d = db.getMeaning(word);
@@ -1636,19 +1839,33 @@ public class MainActivity extends Activity {
     }
 
     private String searchGoogleTranslation(String word) {
+        // اول با زبان مبدأ انتخاب شده
+        String r = callGoogleTranslate(word, getSavedSourceLang(), getSavedLanguage());
+        if (r != null && !r.trim().isEmpty() && !r.equals(word)) {
+            return r;
+        }
+        // اگه نتیجه نداد، با auto detect
+        String autoR = callGoogleTranslate(word, "auto", getSavedLanguage());
+        if (autoR != null && !autoR.trim().isEmpty() && !autoR.equals(word)) {
+            return autoR;
+        }
+        return r;
+    }
+
+    private String callGoogleTranslate(String word, String srcLang, String tgtLang) {
         try {
-            String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl="
-                + getSavedLanguage() + "&dt=t&q="
+            String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl="
+                + srcLang + "&tl=" + tgtLang + "&dt=t&q="
                 + java.net.URLEncoder.encode(word, "UTF-8");
             java.net.URL obj = new java.net.URL(url);
             java.net.HttpURLConnection conn =
                 (java.net.HttpURLConnection) obj.openConnection();
             conn.setRequestMethod("GET");
-            conn.setConnectTimeout(3000);
-            conn.setReadTimeout(3000);
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
             conn.setRequestProperty("User-Agent", "Mozilla/5.0");
             java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(conn.getInputStream()));
+                new java.io.InputStreamReader(conn.getInputStream(), "UTF-8"));
             StringBuilder response = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) response.append(line);
@@ -1659,8 +1876,11 @@ public class MainActivity extends Activity {
             start += 4;
             int end = json.indexOf("\"", start);
             if (end == -1) return null;
-            return json.substring(start, end).replace("\\u200c", "\u200c");
+            String result = json.substring(start, end);
+            result = unescapeUnicode(result);
+            return result;
         } catch (Exception e) {
+            android.util.Log.e("TRANSLATE", "Google err: " + e.getMessage());
             return null;
         }
     }
@@ -2047,6 +2267,9 @@ public class MainActivity extends Activity {
         // چک آپدیت
         checkForUpdates();
 
+        // راهنمای اول‌بار
+        showOnboardingIfFirstTime();
+
         // ═══════════════════════════════════
         // اتصال دکمه‌های UI جدید
         // ═══════════════════════════════════
@@ -2259,6 +2482,101 @@ public class MainActivity extends Activity {
         {"pt", "Português", "PT"}
     };
 
+    // ═══ تبدیل \\uXXXX به کاراکتر یونیکد ═══
+    // ═══ پاک‌سازی هوشمند متن ═══
+    // ═══ ترجمه آفلاین با ML Kit (با انتظار حداکثر ۴ ثانیه) ═══
+    public static String translateOffline(final Context ctx, final String text,
+                                            final String src, final String tgt) {
+        if (!OfflineTranslator.isGmsAvailable(ctx)) return null;
+        if (text == null || text.trim().isEmpty()) return null;
+
+        final String[] result = {null};
+        final Object lock = new Object();
+        OfflineTranslator.translate(ctx, text, src, tgt, new OfflineTranslator.Callback() {
+            @Override
+            public void onSuccess(String translated) {
+                synchronized (lock) {
+                    result[0] = translated;
+                    lock.notify();
+                }
+            }
+            @Override
+            public void onFailure(String error) {
+                synchronized (lock) {
+                    lock.notify();
+                }
+            }
+        });
+        synchronized (lock) {
+            try { lock.wait(4000); } catch (InterruptedException e) {}
+        }
+        return result[0];
+    }
+
+    public static String smartClean(String text) {
+        if (text == null) return "";
+        text = text.trim();
+        if (text.isEmpty()) return "";
+
+        int engChars = 0;
+        int nonEngChars = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                engChars++;
+            } else if (Character.isLetter(c)) {
+                nonEngChars++;
+            }
+        }
+
+        if (nonEngChars > engChars) {
+            return text;
+        }
+        return text.toLowerCase().replaceAll("[^a-z]", "");
+    }
+
+    public static String smartCleanLong(String text) {
+        if (text == null) return "";
+        text = text.trim();
+        if (text.isEmpty()) return "";
+
+        int engChars = 0;
+        int nonEngChars = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                engChars++;
+            } else if (Character.isLetter(c)) {
+                nonEngChars++;
+            }
+        }
+
+        if (nonEngChars > engChars) {
+            return text;
+        }
+        return text.toLowerCase().replaceAll("[^a-z\\s]", " ").trim();
+    }
+
+    public static String unescapeUnicode(String input) {
+        if (input == null) return null;
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        while (i < input.length()) {
+            char c = input.charAt(i);
+            if (c == '\\' && i + 5 < input.length() && input.charAt(i + 1) == 'u') {
+                try {
+                    int code = Integer.parseInt(input.substring(i + 2, i + 6), 16);
+                    sb.append((char) code);
+                    i += 6;
+                    continue;
+                } catch (NumberFormatException e) {}
+            }
+            sb.append(c);
+            i++;
+        }
+        return sb.toString();
+    }
+
     public static String getSavedLanguage() {
         SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         return prefs.getString(KEY_LANGUAGE, "fa");
@@ -2314,6 +2632,7 @@ public class MainActivity extends Activity {
                 String code = LANGUAGES[which][0];
                 setSavedLanguage(code);
                 updateLanguageUI();
+                checkAndPromptModelDownload(getSavedSourceLang(), code);
                 Toast.makeText(MainActivity.this,
                     "مقصد: " + LANGUAGES[which][1], Toast.LENGTH_SHORT).show();
             })
@@ -2334,6 +2653,7 @@ public class MainActivity extends Activity {
                 String code = LANGUAGES[which][0];
                 setSavedSourceLang(code);
                 updateLanguageUI();
+                checkAndPromptModelDownload(code, getSavedLanguage());
                 Toast.makeText(MainActivity.this,
                     "مبدأ: " + LANGUAGES[which][1], Toast.LENGTH_SHORT).show();
             })
@@ -2460,7 +2780,7 @@ public class MainActivity extends Activity {
     public static class ClipboardListenerService extends Service {
         public String getGoogleTranslation(String word) {
             try {
-                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=" + getSavedLanguage() + "&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
+                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" + getSavedSourceLang() + "&tl=" + getSavedLanguage() + "&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
                 java.net.URL obj = new java.net.URL(url);
                 java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
                 conn.setRequestMethod("GET");
@@ -2591,7 +2911,7 @@ public static boolean clipboardEnabled = false;
 
         private void handleCopiedText(final String text) {
             if (!clipboardEnabled) return;
-            final String cleanWord = text.toLowerCase().replaceAll("[^a-z\\s]", " ").trim();
+            final String cleanWord = smartCleanLong(text);
             if (cleanWord.isEmpty()) return;
 
             new Thread(new Runnable() {
@@ -2608,6 +2928,16 @@ public static boolean clipboardEnabled = false;
                     if (meaning == null || meaning.length() == 0 || meaning.equals(cleanWord)) {
                         try {
                             meaning = getMyMemoryTranslation(cleanWord);
+                        } catch (Exception e) {
+                            meaning = null;
+                        }
+                    }
+
+                    // اگر MyMemory جواب نداد → ML Kit آفلاین
+                    if (meaning == null || meaning.length() == 0 || meaning.equals(cleanWord)) {
+                        try {
+                            meaning = translateOffline(ClipboardListenerService.this, cleanWord,
+                                getSavedSourceLang(), getSavedLanguage());
                         } catch (Exception e) {
                             meaning = null;
                         }
