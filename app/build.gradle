@@ -6,6 +6,15 @@ android {
     namespace 'com.example.hello'
     compileSdk 34
 
+    signingConfigs {
+        release {
+            storeFile file(System.getProperty("user.home") + "/taptranslate-keystore.jks")
+            storePassword "123456"
+            keyAlias "my-alias"
+            keyPassword "123456"
+        }
+    }
+
     defaultConfig {
         applicationId "com.taptranslate.app"
         minSdk 21
@@ -23,6 +32,7 @@ android {
     buildTypes {
         release {
             minifyEnabled false
+            signingConfig signingConfigs.release
         }
     }
 
