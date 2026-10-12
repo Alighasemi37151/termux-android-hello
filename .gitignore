@@ -2,3 +2,12 @@ build/
 *.keystore
 local.properties
 .gradle/
+
+# ═══ امنیتی: کلیدها هرگز توی گیت نرن ═══
+*.jks
+*.keystore
+*.idsig
+my-release-key.*
+
+# APK ها
+*.apk
