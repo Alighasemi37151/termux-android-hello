@@ -1,0 +1,3637 @@
+package com.example.hello;
+
+import java.util.ArrayList;
+import java.util.List;
+import android.accessibilityservice.AccessibilityService;
+import android.app.Activity;
+import android.app.Service;
+import android.widget.ScrollView;
+import android.widget.EditText;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.ContentValues;
+import android.content.Context;
+import android.content.Intent;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.provider.Settings;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.WindowManager;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Toast;
+import java.nio.ByteBuffer;
+import android.media.Image;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
+import android.media.ImageReader;
+import android.util.DisplayMetrics;
+import android.content.DialogInterface;
+import android.app.AlertDialog;
+import android.content.SharedPreferences;
+import java.io.IOException;
+import android.provider.MediaStore;
+import android.graphics.Bitmap;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.common.InputImage;
+import android.widget.ImageButton;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageInfo;
+import android.view.inputmethod.EditorInfo;
+import android.text.InputType;
+
+public class MainActivity extends Activity {
+    public static Context appContext;
+
+    public static class MyDatabase extends SQLiteOpenHelper {
+        private static final String DB_NAME = "dictionary_v12.db";
+        private static final int DB_VERSION = 1;
+
+        private Context context;
+
+        public MyDatabase(Context context) {
+            super(context, DB_NAME, null, DB_VERSION);
+            this.context = context;
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE dictionary (english TEXT UNIQUE, persian TEXT)");
+            loadWordsFromAssets(db);
+        }
+
+        private void insertWord(SQLiteDatabase db, String eng, String per) {
+            ContentValues values = new ContentValues();
+            values.put("english", eng);
+            values.put("persian", per);
+            db.insert("dictionary", null, values);
+        }
+
+        public int getWordCount() {
+            SQLiteDatabase db = this.getReadableDatabase();
+            Cursor cursor = db.rawQuery("SELECT COUNT(*) FROM dictionary", null);
+            int count = 0;
+            if (cursor.moveToFirst()) {
+                count = cursor.getInt(0);
+            }
+            cursor.close();
+            return count;
+        }
+
+        public String getMeaning(String word) {
+            SQLiteDatabase db = this.getReadableDatabase();
+            Cursor cursor = db.rawQuery("SELECT persian FROM dictionary WHERE english = ?", new String[]{word.toLowerCase()});
+            if (cursor.moveToFirst()) {
+                String result = cursor.getString(0);
+                cursor.close();
+                return result;
+            }
+            cursor.close();
+            return null;
+        }
+
+        public void saveMeaning(String english, String persian) {
+            try {
+                SQLiteDatabase db = this.getWritableDatabase();
+                ContentValues values = new ContentValues();
+                values.put("english", english.toLowerCase());
+                values.put("persian", persian);
+                db.insertWithOnConflict("dictionary", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+                db.close();
+            } catch (Exception e) {}
+        }
+
+        private void loadWordsFromAssets(SQLiteDatabase db) {
+            int count = 0;
+            try {
+                java.io.InputStream rawIs = context.getAssets().open("words.txt.gz");
+                java.io.InputStream is = new java.util.zip.GZIPInputStream(rawIs, 8192);
+                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is), 8192);
+                String line;
+                db.beginTransaction();
+                while ((line = reader.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    int pipeIdx = line.indexOf('|');
+                    if (pipeIdx > 0) {
+                        String eng = line.substring(0, pipeIdx).trim().toLowerCase();
+                        String per = line.substring(pipeIdx + 1).trim();
+                        if (!eng.isEmpty() && !per.isEmpty()) {
+                            ContentValues values = new ContentValues();
+                            values.put("english", eng);
+                            values.put("persian", per);
+                            long result = db.insertWithOnConflict("dictionary", null, values, SQLiteDatabase.CONFLICT_IGNORE);
+                            if (result != -1) count++;
+                        }
+                    }
+                }
+                db.setTransactionSuccessful();
+                db.endTransaction();
+                reader.close();
+                is.close();
+                // ذخیره تعداد در یه فایل
+                try {
+                    java.io.FileWriter fw = new java.io.FileWriter("/sdcard/word_count.txt");
+                    fw.write("Loaded: " + count);
+                    fw.close();
+                } catch (Exception e) {}
+                android.util.Log.d("DICT", "Loaded " + count + " words");
+            } catch (Exception e) {
+                android.util.Log.e("DICT", "Error: " + e.getMessage());
+            }
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            db.execSQL("DROP TABLE IF EXISTS dictionary");
+            onCreate(db);
+        }
+    }
+
+    public static WordDetectionService accessibilityServiceInstance = null;
+
+    public static class FloatingBubbleService extends Service {
+        public static FloatingBubbleService instance;
+        public View bubbleView;
+
+        // ✅ متغیرهای حالت مطالعه
+        public static boolean isStudyModeActive = false;
+        private View studyLockOverlay = null;
+        private Runnable studyAutoUnlockRunnable = null;
+
+        private WindowManager windowManager;
+
+        public static boolean isScanModeActive = false;
+
+        public static Intent mediaProjectionData = null;
+        public static int mediaProjectionResultCode = 0;
+        public static android.media.projection.MediaProjection activeProjection = null;
+        private View popupView;
+        private MyDatabase db;
+        private static final int BUBBLE_SIZE = 65;
+        private Handler handler = new Handler(Looper.getMainLooper());
+        private Runnable translationRunnable;
+        private Runnable hidePopupRunnable;
+        private String lastTranslatedWord = "";
+
+        // برای مدیریت لمس حباب
+        private Runnable longPressRunnable;
+        private Runnable singleTapRunnable;
+        private boolean isLongPressTriggered = false;
+        private long lastTapTime = 0;
+        private static final long LONG_PRESS_MS = 500;
+        private static final long DOUBLE_TAP_MS = 300;
+
+        @Override
+        public void onCreate() {
+            super.onCreate();
+            instance = this;
+            
+            // بررسی دسترسی Overlay قبل از هر چیز
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (!Settings.canDrawOverlays(this)) {
+                    Toast.makeText(this, "دسترسی Overlay غیرفعاله! لطفاً از داخل اپ فعال کنید.", Toast.LENGTH_LONG).show();
+                    stopSelf();
+                    return;
+                }
+            }
+            
+            try {
+                windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+                db = new MyDatabase(this);
+                createBubble();
+            } catch (Exception e) {
+                Toast.makeText(this, "خطا در شروع سرویس: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                stopSelf();
+            }
+        }
+
+        private void createBubble() {
+            final TextView bubble = new TextView(this);
+            bubble.setText("T");
+            bubble.setTextSize(20);
+            bubble.setTextColor(Color.parseColor("#2E7D32")); // سبز تیره
+            bubble.setGravity(Gravity.CENTER);
+
+            // ✅ پس‌زمینه شفاف با خط سبز دورش
+            final GradientDrawable shape = new GradientDrawable();
+            shape.setShape(GradientDrawable.OVAL);
+            shape.setColor(Color.parseColor("#22000000")); // شفاف با یه ذره سیاهی
+            shape.setStroke(4, Color.parseColor("#4CAF50")); // خط سبز ضخیم
+            shape.setSize(BUBBLE_SIZE, BUBBLE_SIZE);
+            bubble.setBackground(shape);
+
+            int layoutType;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+            } else {
+                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
+            }
+
+            final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    65, 65, layoutType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT);
+
+            params.gravity = Gravity.TOP | Gravity.START;
+            params.x = 100;
+            params.y = 200;
+
+            bubble.setOnTouchListener(new View.OnTouchListener() {
+                private int initialX, initialY;
+                private float initialTouchX, initialTouchY;
+                private boolean isDrag = false;
+
+                @Override
+                public boolean onTouch(View v, MotionEvent event) {
+                    switch (event.getAction()) {
+                        case MotionEvent.ACTION_DOWN:
+                            initialX = params.x;
+                            initialY = params.y;
+                            initialTouchX = event.getRawX();
+                            initialTouchY = event.getRawY();
+                            isDrag = false;
+                            isLongPressTriggered = false;
+
+                            // لانگ پرس → باز کردن اپ
+                            longPressRunnable = new Runnable() {
+                                @Override
+                                public void run() {
+                                    isLongPressTriggered = true;
+                                    openApp();
+                                }
+                            };
+                            handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
+                            return true;
+
+                        case MotionEvent.ACTION_MOVE:
+                            int dx = (int) (event.getRawX() - initialTouchX);
+                            int dy = (int) (event.getRawY() - initialTouchY);
+                            if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                                isDrag = true;
+                                if (longPressRunnable != null) {
+                                    handler.removeCallbacks(longPressRunnable);
+                                }
+                                params.x = initialX + dx;
+                                params.y = initialY + dy;
+                                windowManager.updateViewLayout(bubbleView, params);
+                            }
+                            return true;
+
+                        case MotionEvent.ACTION_UP:
+                            if (longPressRunnable != null) {
+                                handler.removeCallbacks(longPressRunnable);
+                            }
+
+                            if (!isDrag && !isLongPressTriggered) {
+                                long now = System.currentTimeMillis();
+                                if (now - lastTapTime < DOUBLE_TAP_MS) {
+                                    // ✅ دابل تب → فعال/غیرفعال کردن حالت مطالعه
+                                    if (singleTapRunnable != null) {
+                                        handler.removeCallbacks(singleTapRunnable);
+                                    }
+                                    
+                                    // تغییر وضعیت Study Mode
+                                    isStudyModeActive = !isStudyModeActive;
+                                    
+                                    if (isStudyModeActive) {
+                                        activateStudyMode();
+                                    } else {
+                                        deactivateStudyMode();
+                                        // غیرفعال شدن Study Mode
+                                        Toast.makeText(FloatingBubbleService.this, "حالت مطالعه خاموش شد", Toast.LENGTH_SHORT).show();
+                                        // برگرداندن ظاهر حباب به سبز + حرف T
+                                        GradientDrawable normalShape = new GradientDrawable();
+                                        normalShape.setShape(GradientDrawable.OVAL);
+                                        normalShape.setColor(Color.parseColor("#22000000"));
+                                        normalShape.setStroke(4, Color.parseColor("#4CAF50"));
+                                        normalShape.setSize(65, 65);
+                                        bubble.setBackground(normalShape);
+                                        bubble.setText("T");
+                                        bubble.setTextSize(20);
+                                        bubble.setTextColor(Color.parseColor("#2E7D32"));
+                                        
+                                        // خاموش کردن حالت اسکن
+                                        if (!FloatingBubbleService.isStudyModeActive) FloatingBubbleService.isScanModeActive = false;
+                                    }
+                                } else {
+                                    lastTapTime = now;
+                                    singleTapRunnable = new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (mediaProjectionData == null || activeProjection == null) {
+                                                Toast.makeText(FloatingBubbleService.this, "MediaProjection فعال نیست", Toast.LENGTH_SHORT).show();
+                                                return;
+                                            }
+                                            isScanModeActive = true;
+                                            if (accessibilityServiceInstance != null) {
+                                                accessibilityServiceInstance.startScanMode();
+                                            }
+                                        }
+                                    };
+                                    handler.postDelayed(singleTapRunnable, DOUBLE_TAP_MS);
+                                }
+                            }
+                            return true;
+                    }
+                    return false;
+                }
+            });
+
+            bubbleView = bubble;
+            FloatingBubbleService.this.bubbleView = bubble;
+            windowManager.addView(bubbleView, params);
+        }
+
+        public void showTranslationPopup(String word, String meaning) {
+            if (popupView != null) {
+                windowManager.removeView(popupView);
+                popupView = null;
+            }
+            if (hidePopupRunnable != null) handler.removeCallbacks(hidePopupRunnable);
+
+            LinearLayout layout = new LinearLayout(this);
+            layout.setOrientation(LinearLayout.VERTICAL);
+            layout.setBackgroundColor(Color.WHITE);
+            layout.setPadding(30, 30, 30, 30);
+
+            TextView wordText = new TextView(this);
+            wordText.setText(word);
+            wordText.setTextSize(18);
+            wordText.setTextColor(Color.BLACK);
+
+            TextView meaningText = new TextView(this);
+            meaningText.setText(meaning);
+            meaningText.setTextSize(16);
+            meaningText.setTextColor(Color.DKGRAY);
+            meaningText.setPadding(0, 10, 0, 10);
+
+            // layout.addView(wordText); // متن اصلی حذف شد
+            layout.addView(meaningText);
+
+            int layoutType;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+            } else {
+                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
+            }
+
+            WindowManager.LayoutParams popupParams = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    layoutType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT);
+
+            popupParams.gravity = Gravity.TOP | Gravity.START;
+            popupParams.x = 100;
+            popupParams.y = 500;
+
+            popupView = layout;
+            windowManager.addView(popupView, popupParams);
+
+            hidePopupRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    if (popupView != null) {
+                        try { windowManager.removeView(popupView); } catch (Exception e) {}
+                        popupView = null;
+                    }
+                }
+            };
+            handler.postDelayed(hidePopupRunnable, 3000);
+        }
+
+        @Override
+        public int onStartCommand(Intent intent, int flags, int startId) {
+            return START_NOT_STICKY;
+        }
+
+
+        // ✅ فعال‌سازی حالت مطالعه
+        private void activateStudyMode() {
+            isStudyModeActive = true;
+            
+            // تغییر حباب به بنفش
+            if (bubbleView instanceof TextView) {
+                TextView bubble = (TextView) bubbleView;
+                GradientDrawable activeShape = new GradientDrawable();
+                activeShape.setShape(GradientDrawable.OVAL);
+                activeShape.setColor(Color.parseColor("#221A237E"));
+                activeShape.setStroke(4, Color.parseColor("#3F51B5"));
+                activeShape.setSize(65, 65);
+                bubble.setBackground(activeShape);
+                bubble.setText("📖");
+                bubble.setTextSize(22);
+            }
+            
+            // ✅ شروع حالت مطالعه در سرویس (با اسکن OCR + نمایش لایه شفاف)
+            if (accessibilityServiceInstance != null) {
+                accessibilityServiceInstance.startStudyMode();
+            }
+            
+            // تایمر ۵۰ ثانیه‌ای برای خروج خودکار
+            studyAutoUnlockRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    deactivateStudyMode();
+                    Toast.makeText(FloatingBubbleService.this, "⏱ حالت مطالعه خودکار خاموش شد", Toast.LENGTH_SHORT).show();
+                }
+            };
+            handler.postDelayed(studyAutoUnlockRunnable, 50000);
+            
+            Toast.makeText(this, "📖 حالت مطالعه فعال (۵۰ ثانیه)", Toast.LENGTH_SHORT).show();
+        }
+        
+        // ✅ غیرفعال‌سازی حالت مطالعه
+        private void deactivateStudyMode() {
+            isStudyModeActive = false;
+            
+            if (studyAutoUnlockRunnable != null) {
+                handler.removeCallbacks(studyAutoUnlockRunnable);
+                studyAutoUnlockRunnable = null;
+            }
+            
+            // ✅ خاموش کردن حالت مطالعه در سرویس
+            if (accessibilityServiceInstance != null) {
+                accessibilityServiceInstance.stopStudyMode();
+            }
+            
+            // برگرداندن حباب
+            if (bubbleView instanceof TextView) {
+                TextView bubble = (TextView) bubbleView;
+                GradientDrawable normalShape = new GradientDrawable();
+                normalShape.setShape(GradientDrawable.OVAL);
+                normalShape.setColor(Color.parseColor("#22000000"));
+                normalShape.setStroke(4, Color.parseColor("#4CAF50"));
+                normalShape.setSize(65, 65);
+                bubble.setBackground(normalShape);
+                bubble.setText("T");
+                bubble.setTextSize(20);
+                bubble.setTextColor(Color.parseColor("#2E7D32"));
+            }
+        }
+
+        private void openApp() {
+            try {
+                Intent intent = new Intent(FloatingBubbleService.this, MainActivity.class);
+                intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(intent);
+            } catch (Exception e) {}
+        }
+
+        public void onDestroy() {
+            super.onDestroy();
+            if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable);
+            if (singleTapRunnable != null) handler.removeCallbacks(singleTapRunnable);
+            if (bubbleView != null) windowManager.removeView(bubbleView);
+            if (popupView != null) windowManager.removeView(popupView);
+        }
+
+        @Override
+        public IBinder onBind(Intent intent) { return null; }
+    }
+
+    public static class WordDetectionService extends AccessibilityService {
+        // ✅ شروع حالت مطالعه: یک بار اسکن + ذخیره مختصات + لایه شفاف
+        public void startStudyMode() {
+            studyModeOn = true;
+            // اول اسکن می‌کنیم (startScanMode که MediaProjection + OCR داره)
+            startScanMode();
+        }
+        
+        // ✅ توقف حالت مطالعه
+        public void stopStudyMode() {
+            studyModeOn = false;
+            hideStudyOverlaySafe();
+        }
+        
+        // متغیر حالت مطالعه
+        private boolean studyModeOn = false;
+        private View studyOverlayView = null;
+        private Handler studyAutoHideHandler = null;
+        
+        private void showStudyOverlaySafe() {
+            hideStudyOverlaySafe();
+            try {
+                WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                View overlay = new View(this);
+                overlay.setBackgroundColor(Color.TRANSPARENT);
+                overlay.setClickable(true);
+                overlay.setOnTouchListener(new View.OnTouchListener() {
+                    @Override
+                    public boolean onTouch(View v, MotionEvent event) {
+                        if (event.getAction() == MotionEvent.ACTION_UP) {
+                            int x = (int) event.getRawX();
+                            int y = (int) event.getRawY();
+                            handleStudyTap(x, y);
+                        }
+                        return true;
+                    }
+                });
+                
+                int layoutType;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+                } else {
+                    layoutType = WindowManager.LayoutParams.TYPE_PHONE;
+                }
+                
+                WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    layoutType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT
+                );
+                
+                wm.addView(overlay, params);
+                studyOverlayView = overlay;
+                
+                // ✅ آوردن حباب به بالای لایه شفاف (تا دبل‌کلیک کار کنه)
+                if (FloatingBubbleService.instance != null && FloatingBubbleService.instance.bubbleView != null) {
+                    try {
+                        WindowManager.LayoutParams bubbleParams = new WindowManager.LayoutParams(
+                            65, 65,
+                            layoutType,
+                            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                            PixelFormat.TRANSLUCENT
+                        );
+                        bubbleParams.gravity = Gravity.TOP | Gravity.START;
+                        bubbleParams.x = 100;
+                        bubbleParams.y = 200;
+                        wm.removeView(FloatingBubbleService.instance.bubbleView);
+                        wm.addView(FloatingBubbleService.instance.bubbleView, bubbleParams);
+                    } catch (Exception e2) {}
+                }
+            } catch (Exception e) {
+                android.util.Log.e("STUDY", "overlay err: " + e.getMessage());
+            }
+        }
+        
+        private void hideStudyOverlaySafe() {
+            try {
+                WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                if (studyOverlayView != null && wm != null) {
+                    wm.removeView(studyOverlayView);
+                    studyOverlayView = null;
+                }
+            } catch (Exception e) {}
+        }
+        
+        // ✅ تابع کمکی برای بستن هر پنجره شناور (برای دکمه Power)
+        public void hideScanOverlay() {
+            try {
+                hideStudyOverlaySafe();
+            } catch (Exception e) {}
+        }
+
+        
+        // ✅ پردازش لمس: پیدا کردن نزدیک‌ترین کلمه از detectedWords
+        private void handleStudyTap(int x, int y) {
+            if (detectedWords == null || detectedWords.isEmpty()) return;
+            
+            DetectedWord closest = null;
+            int minDist = Integer.MAX_VALUE;
+            for (DetectedWord dw : detectedWords) {
+                if (dw.bounds != null) {
+                    if (dw.bounds.contains(x, y)) {
+                        closest = dw;
+                        break;
+                    }
+                    int cx = dw.bounds.centerX();
+                    int cy = dw.bounds.centerY();
+                    int dx = cx - x, dy = cy - y;
+                    int dist = dx*dx + dy*dy;
+                    if (dist < minDist && dist < 40000) {
+                        minDist = dist;
+                        closest = dw;
+                    }
+                }
+            }
+            
+            if (closest != null) {
+                translateDetectedWord(closest.text);
+            }
+        }
+
+        @Override
+        public void onAccessibilityEvent(AccessibilityEvent event) {
+            // ⛔️ جلوگیری از ترجمه خودکار وقتی حالت اسکن فعال نیست
+            if (!FloatingBubbleService.isScanModeActive) return;
+
+            if (!translationEnabled) return;
+            
+            int eventType = event.getEventType();
+            
+            // فقط رویدادهای کلیک و Long Click را مدیریت کن
+            if (eventType == AccessibilityEvent.TYPE_VIEW_CLICKED || 
+                eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED) {
+                
+                AccessibilityNodeInfo source = event.getSource();
+                if (source != null) {
+                    // گرفتن مختصات لمس
+                    Rect rect = new Rect();
+                    source.getBoundsInScreen(rect);
+                    int centerX = rect.centerX();
+                    int centerY = rect.centerY();
+                    
+                    // پیدا کردن کلمه زیر لمس
+                    String word = getWordAt(centerX, centerY);
+                    
+                    if (word != null && !word.isEmpty() && word.matches("[a-zA-Z]+")) {
+                        // کلمه پیدا شد → ترجمه کن
+                        final String finalWord = word.toLowerCase();
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                String meaning = getGoogleTranslation(finalWord);
+                                if (meaning == null || meaning.isEmpty() || meaning.equals(finalWord)) {
+                                    meaning = db.getMeaning(finalWord);
+                                }
+                                if (meaning != null) {
+                                    final String finalMeaning = meaning;
+                                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            showPopupOnUI(finalWord, finalMeaning);
+                                        }
+                                    });
+                                }
+                            }
+                        }).start();
+                    }
+                }
+            }
+        }
+        private android.speech.tts.TextToSpeech tts;
+        private MyDatabase db;
+        private String lastClipboard = "";
+        public static boolean translationEnabled = true;
+        private String lastGoogleError = null;
+        private Thread currentThread = null;
+
+        @Override
+        public void onServiceConnected() {
+            super.onServiceConnected();
+            db = new MyDatabase(this);
+            tts = new android.speech.tts.TextToSpeech(this,
+                    new android.speech.tts.TextToSpeech.OnInitListener() {
+                @Override
+                public void onInit(int status) {
+                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                        tts.setLanguage(java.util.Locale.US);
+                    }
+                }
+            });
+            accessibilityServiceInstance = this;
+            int wc = db.getWordCount();
+            String forceM = db.getMeaning("force");
+            String abandonM = db.getMeaning("abandon");
+            String helloM = db.getMeaning("hello");
+            String msg = "Words: " + wc + " force: " + forceM + " abandon: " + abandonM + " hello: " + helloM;
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+        }
+
+
+        // ========== متد اسکن صفحه (OCR) ==========
+        public void startScanMode() {
+            if (FloatingBubbleService.activeProjection == null) {
+                Toast.makeText(this, "MediaProjection فعال نیست", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            // ۱. گرفتن عکس از صفحه
+            DisplayMetrics metrics = getResources().getDisplayMetrics();
+            int width = metrics.widthPixels;
+            int height = metrics.heightPixels;
+            int density = metrics.densityDpi;
+
+            final ImageReader imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+            final VirtualDisplay virtualDisplay = FloatingBubbleService.activeProjection.createVirtualDisplay(
+                    "ScreenCapture",
+                    width, height, density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    imageReader.getSurface(), null, null
+            );
+
+            // ۲. صبر کوتاه و گرفتن عکس
+            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    Image image = imageReader.acquireLatestImage();
+                    if (image == null) {
+                        Toast.makeText(WordDetectionService.this, "خطا در گرفتن عکس", Toast.LENGTH_SHORT).show();
+                        virtualDisplay.release();
+                        imageReader.close();
+                        return;
+                    }
+
+                    Image.Plane[] planes = image.getPlanes();
+                    java.nio.ByteBuffer buffer = planes[0].getBuffer();
+                    int pixelStride = planes[0].getPixelStride();
+                    int rowStride = planes[0].getRowStride();
+                    int rowPadding = rowStride - pixelStride * width;
+
+                    Bitmap bitmap = Bitmap.createBitmap(
+                            width + rowPadding / pixelStride,
+                            height,
+                            Bitmap.Config.ARGB_8888
+                    );
+                    bitmap.copyPixelsFromBuffer(buffer);
+                    image.close();
+
+                    // ۳. برش عکس به اندازه دقیق
+                    Bitmap croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height);
+
+                    // ۴. آزاد کردن منابع
+                    virtualDisplay.release();
+                    imageReader.close();
+
+                    // ۵. OCR
+                    extractTextFromBitmap(croppedBitmap);
+                }
+            }, 500);
+        }
+
+        // ========== OCR روی Bitmap ==========
+        private void extractTextFromBitmap(Bitmap bitmap) {
+            InputImage image = InputImage.fromBitmap(bitmap, 0);
+            com.google.mlkit.vision.text.TextRecognizer recognizer =
+                    TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+
+            recognizer.process(image)
+                    .addOnSuccessListener(visionText -> {
+                        // ذخیره کلمات + مختصات
+                        detectedWords.clear();
+                        for (com.google.mlkit.vision.text.Text.TextBlock block : visionText.getTextBlocks()) {
+                            for (com.google.mlkit.vision.text.Text.Line line : block.getLines()) {
+                                for (com.google.mlkit.vision.text.Text.Element element : line.getElements()) {
+                                    String word = element.getText();
+                                    Rect box = element.getBoundingBox();
+                                    if (word != null && box != null) {
+                                        detectedWords.add(new DetectedWord(word, box));
+                                    }
+                                }
+                            }
+                        }
+
+                        // ✅ اگه حالت مطالعه فعاله، لایه مخصوص مطالعه نشون بده
+                        if (studyModeOn) {
+                            showStudyOverlaySafe();
+                            Toast.makeText(WordDetectionService.this,
+                                "📖 مطالعه: " + detectedWords.size() + " کلمه",
+                                Toast.LENGTH_SHORT).show();
+                        } else {
+                            showTransparentOverlay();
+                            Toast.makeText(WordDetectionService.this,
+                                "تعداد کلمات: " + detectedWords.size(),
+                                Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        Toast.makeText(WordDetectionService.this,
+                                "خطا در OCR: " + e.getMessage(),
+                                Toast.LENGTH_SHORT).show();
+                    });
+        }
+
+        // ========== لایه شفاف برای لمس ==========
+        private void showTransparentOverlay() {
+            final WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+            final View overlayView = new View(this);
+            overlayView.setBackgroundColor(Color.TRANSPARENT);
+
+            int layoutType;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+            } else {
+                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
+            }
+
+            final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    layoutType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT
+            );
+
+            overlayView.setOnTouchListener(new View.OnTouchListener() {
+                @Override
+                public boolean onTouch(View v, MotionEvent event) {
+                    if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                        int rawX = (int) event.getRawX();
+                        int rawY = (int) event.getRawY();
+                        int localX = (int) event.getX();
+                        int localY = (int) event.getY();
+
+                        // دیباگ: نمایش مختصات
+                        Toast.makeText(WordDetectionService.this,
+                                "لمس خام: x=" + rawX + ", y=" + rawY +
+                                "\nلمس محلی: x=" + localX + ", y=" + localY +
+                                "\nتعداد کلمات: " + detectedWords.size(),
+                                Toast.LENGTH_LONG).show();
+
+                        // پیدا کردن کلمه زیر لمس (اول با مختصات خام)
+                        boolean found = false;
+                        for (DetectedWord dw : detectedWords) {
+                            if (dw.bounds.contains(rawX, rawY)) {
+                                Toast.makeText(WordDetectionService.this,
+                                        "پیدا شد (خام): " + dw.text + "\n" + dw.bounds.toString(),
+                                        Toast.LENGTH_SHORT).show();
+                                translateDetectedWord(dw.text);
+                                found = true;
+                                break;
+                            }
+                        }
+                        
+                        // اگر با مختصات خام پیدا نشد، با مختصات محلی امتحان کن
+                        if (!found) {
+                            for (DetectedWord dw : detectedWords) {
+                                if (dw.bounds.contains(localX, localY)) {
+                                    Toast.makeText(WordDetectionService.this,
+                                            "پیدا شد (محلی): " + dw.text + "\n" + dw.bounds.toString(),
+                                            Toast.LENGTH_SHORT).show();
+                                    translateDetectedWord(dw.text);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (!found) {
+                            Toast.makeText(WordDetectionService.this,
+                                    "کلمه‌ای پیدا نشد!",
+                                    Toast.LENGTH_SHORT).show();
+                        }
+
+                        // ✅ فقط اگه حالت مطالعه فعال نیست، اسکن رو ریست کن
+                        if (!FloatingBubbleService.isStudyModeActive) {
+                            FloatingBubbleService.isScanModeActive = false;
+                        }
+
+                        // بستن لایه شفاف
+                        try { wm.removeView(overlayView); } catch (Exception e) {}
+                        return true;
+                    }
+                    return false;
+                }
+            });
+
+            wm.addView(overlayView, params);
+        }
+
+        // ========== ترجمه کلمه پیدا شده ==========
+        private void translateDetectedWord(String word) {
+            final String cleanWord = smartClean(word);
+            if (cleanWord.isEmpty()) return;
+
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String meaning = null;
+
+                    // ⚡ ML Kit اول
+                    if (OfflineTranslator.isGmsAvailable(WordDetectionService.this)) {
+                        meaning = translateOffline(WordDetectionService.this, cleanWord,
+                            getSavedSourceLang(), getSavedLanguage());
+                    }
+
+                    // 🌐 آنلاین (Google اول → MyMemory)
+                    if (meaning == null || meaning.isEmpty() || meaning.equals(cleanWord)) {
+                        meaning = smartTranslateFull(WordDetectionService.this, cleanWord,
+                            getSavedSourceLang(), getSavedLanguage());
+                    }
+
+                    // 📚 دیتابیس
+                    if (meaning == null || meaning.isEmpty() || meaning.equals(cleanWord)) {
+                        meaning = db.getMeaning(cleanWord);
+                    }
+
+                    if (meaning != null && !meaning.isEmpty()) {
+                        final String finalMeaning = meaning;
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                showPopupOnUI(cleanWord, finalMeaning);
+                            }
+                        });
+                    }
+                }
+            }).start();
+        }
+
+        // ========== کلاس ذخیره کلمه + مختصات ==========
+        private static class DetectedWord {
+            String text;
+            Rect bounds;
+            DetectedWord(String text, Rect bounds) {
+                this.text = text;
+                this.bounds = bounds;
+            }
+        }
+
+        private java.util.List<DetectedWord> detectedWords = new java.util.ArrayList<>();
+        private void onAccessibilityEvent_DISABLED(AccessibilityEvent event) {
+            if (!translationEnabled) return;
+            int eventType = event.getEventType();
+            if (eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) {
+                AccessibilityNodeInfo source = event.getSource();
+                if (source != null) {
+                    Rect rect = new Rect();
+                    source.getBoundsInScreen(rect);
+                }
+            }
+        }
+
+        private void checkClipboardNow() {
+            try {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm != null && cm.hasPrimaryClip()) {
+                    android.content.ClipData clip = cm.getPrimaryClip();
+                    if (clip != null && clip.getItemCount() > 0) {
+                        CharSequence text = clip.getItemAt(0).getText();
+                        if (text != null) {
+                            String copied = text.toString().trim();
+                            if (!copied.isEmpty() && !copied.equals(lastClipboard)) {
+                                lastClipboard = copied;
+                                if (!translationEnabled) return;
+                                String cleanWord = smartClean(copied);
+                                if (!cleanWord.isEmpty() && cleanWord.length() > 1) {
+                                    // اگه کلمه کوتاهه، مثل قبل
+                                    if (cleanWord.length() <= 25) {
+                                        showClipboardPopup(cleanWord, null);
+                                    } else {
+                                        // اگه متن طولانیه، کلمه‌به‌کلمه ترجمه کن
+                                        showLongTextTranslation(cleanWord);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {}
+        }
+
+        private void showClipboardPopup(final String word, String meaning) {
+            Thread t = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String finalMeaning = null;
+
+                    // ML Kit اول
+                    if (OfflineTranslator.isGmsAvailable(WordDetectionService.this)) {
+                        finalMeaning = translateOffline(WordDetectionService.this, word,
+                            getSavedSourceLang(), getSavedLanguage());
+                    }
+
+                    // آنلاین (Google اول -> MyMemory)
+                    if (finalMeaning == null || finalMeaning.isEmpty() || finalMeaning.equals(word)) {
+                        finalMeaning = smartTranslateFull(WordDetectionService.this, word,
+                            getSavedSourceLang(), getSavedLanguage());
+                    }
+
+                    // دیتابیس
+                    if (finalMeaning == null || finalMeaning.isEmpty() || finalMeaning.equals(word)) {
+                        finalMeaning = db.getMeaning(word);
+                    }
+
+                    final String result = finalMeaning;
+                    Handler h = new Handler(Looper.getMainLooper());
+                    h.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (result != null && !result.isEmpty()) {
+                                showPopupOnUI(word, result);
+                            }
+                        }
+                    });
+                }
+            });
+            t.start();
+        }
+
+        private String wrapText(String text, int maxWordsPerLine) {
+        if (text == null) return "";
+        String[] words = text.trim().split("\\s+");
+        StringBuilder result = new StringBuilder();
+        int count = 0;
+
+        for (String word : words) {
+            if (count > 0 && count >= maxWordsPerLine) {
+                result.append("\\n");
+                count = 0;
+            } else if (count > 0) {
+                result.append(" ");
+            }
+            result.append(word);
+            count++;
+        }
+        return result.toString();
+    }
+
+    private void showPopupOnUI(final String word, final String meaning) {
+            Handler h = new Handler(Looper.getMainLooper());
+            h.post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                        if (wm == null) return;
+
+                        LinearLayout layout = new LinearLayout(WordDetectionService.this);
+                        layout.setOrientation(LinearLayout.VERTICAL);
+
+                        GradientDrawable bg = new GradientDrawable();
+                        bg.setShape(GradientDrawable.RECTANGLE);
+                        bg.setColor(Color.argb(240, 255, 255, 255));
+                        bg.setCornerRadius(30);
+                        bg.setStroke(2, Color.argb(100, 200, 200, 200));
+
+                        layout.setBackground(bg);
+                        layout.setAlpha(0.95f);
+                        layout.setPadding(25, 20, 25, 20);
+                        layout.setGravity(Gravity.CENTER_HORIZONTAL);
+
+                        LinearLayout wordRow =
+                                new LinearLayout(WordDetectionService.this);
+                        wordRow.setOrientation(LinearLayout.HORIZONTAL);
+                        wordRow.setGravity(Gravity.CENTER_VERTICAL);
+                        wordRow.setPadding(10, 0, 10, 0);
+
+                        TextView wordText =
+                                new TextView(WordDetectionService.this);
+                        wordText.setText(word);
+                        wordText.setTextSize(20);
+                        wordText.setTextColor(Color.BLACK);
+                        wordText.setPadding(0, 0, 30, 0);
+                        wordRow.addView(wordText);
+
+                        Button speakBtn =
+                                new Button(WordDetectionService.this);
+                        speakBtn.setText("🔊");
+                        speakBtn.setTextSize(18);
+                        speakBtn.setBackgroundColor(Color.TRANSPARENT);
+                        speakBtn.setPadding(20, 0, 20, 0);
+
+                        speakBtn.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View v) {
+                                if (tts != null) {
+                                    tts.speak(
+                                        word,
+                                        android.speech.tts.TextToSpeech.QUEUE_FLUSH,
+                                        null,
+                                        null
+                                    );
+                                }
+                            }
+                        });
+
+                        wordRow.addView(speakBtn);
+
+                        TextView meaningText =
+                                new TextView(WordDetectionService.this);
+                        meaningText.setText(wrapText(meaning, 7));
+                        meaningText.setTextSize(18);
+                        meaningText.setTextColor(Color.DKGRAY);
+                        meaningText.setPadding(0, 15, 0, 15);
+                        meaningText.setGravity(Gravity.CENTER_HORIZONTAL);
+
+                        layout.addView(wordRow);
+                        layout.addView(meaningText);
+
+                        int layoutType;
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            layoutType =
+                                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+                        } else {
+                            layoutType =
+                                WindowManager.LayoutParams.TYPE_PHONE;
+                        }
+
+                        WindowManager.LayoutParams params =
+                                new WindowManager.LayoutParams(
+                                    WindowManager.LayoutParams.WRAP_CONTENT,
+                                    WindowManager.LayoutParams.WRAP_CONTENT,
+                                    layoutType,
+                                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                                    PixelFormat.TRANSLUCENT
+                                );
+
+                        params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+                        params.y = 150;
+
+                        final View popupView = layout;
+                        wm.addView(popupView, params);
+
+                        Handler h2 = new Handler(Looper.getMainLooper());
+                        h2.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    wm.removeView(popupView);
+                                } catch (Exception e) {}
+                            }
+                        }, 3000);
+
+                    } catch (Exception e) {}
+                }
+            });
+        }
+
+        public String getWordAt(int x, int y) {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return null;
+            return findWordInNode(root, x, y);
+        }
+
+        private String findWordInNode(AccessibilityNodeInfo node, int x, int y) {
+            if (node == null) return null;
+            Rect rect = new Rect();
+            node.getBoundsInScreen(rect);
+            if (rect.contains(x, y)) {
+                if (node.getText() != null) {
+                    String text = node.getText().toString();
+                    String word = extractWordAtPosition(text, rect, x, y);
+                    if (word != null && word.matches("[a-zA-Z]+")) return word.toLowerCase();
+                }
+                if (node.getContentDescription() != null) {
+                    String desc = node.getContentDescription().toString();
+                    String word = extractWordAtPosition(desc, rect, x, y);
+                    if (word != null && word.matches("[a-zA-Z]+")) return word.toLowerCase();
+                }
+                for (int i = 0; i < node.getChildCount(); i++) {
+                    String result = findWordInNode(node.getChild(i), x, y);
+                    if (result != null) return result;
+                }
+            }
+            return null;
+        }
+
+        private String extractWordAtPosition(String text, Rect rect, int x, int y) {
+            if (text == null || text.isEmpty() || rect.width() == 0) return null;
+            int relativeX = x - rect.left;
+            float charWidth = (float) rect.width() / text.length();
+            int charIndex = (int) (relativeX / charWidth);
+            if (charIndex < 0) charIndex = 0;
+            if (charIndex >= text.length()) charIndex = text.length() - 1;
+            if (!Character.isLetter(text.charAt(charIndex))) {
+                int leftIdx = charIndex;
+                int rightIdx = charIndex;
+                while (leftIdx > 0 && !Character.isLetter(text.charAt(leftIdx))) leftIdx--;
+                while (rightIdx < text.length() - 1 && !Character.isLetter(text.charAt(rightIdx))) rightIdx++;
+                if (Character.isLetter(text.charAt(leftIdx))) charIndex = leftIdx;
+                else if (Character.isLetter(text.charAt(rightIdx))) charIndex = rightIdx;
+                else return null;
+            }
+            int start = charIndex;
+            int end = charIndex;
+            while (start > 0 && Character.isLetter(text.charAt(start - 1))) start--;
+            while (end < text.length() - 1 && Character.isLetter(text.charAt(end + 1))) end++;
+            if (start <= end && end < text.length()) {
+                return text.substring(start, end + 1);
+            }
+            return null;
+        }
+
+        public String getGoogleTranslation(String word) {
+            try {
+                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" + getSavedSourceLang() + "&tl=" + getSavedLanguage() + "&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
+                android.util.Log.d("GOOGLE", "URL: " + url);
+                java.net.URL obj = new java.net.URL(url);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(1500);
+                conn.setReadTimeout(1500);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+                reader.close();
+                String json = response.toString();
+                int start = json.indexOf("[[[\"");
+                if (start == -1) {
+                    lastGoogleError = "JSON format error";
+                    return null;
+                }
+                start += 4;
+                int end = json.indexOf("\"", start);
+                if (end == -1) {
+                    lastGoogleError = "End quote not found";
+                    return null;
+                }
+                String result = json.substring(start, end);
+                result = result.replace("\\u200c", "\u200c");
+                android.util.Log.d("GOOGLE", "Result: " + result);
+                return result;
+            } catch (Exception e) {
+                lastGoogleError = e.getClass().getSimpleName() + ": " + e.getMessage();
+                return null;
+            }
+        }
+
+        // ========== ترجمه با MyMemory (API جایگزین) ==========
+        public String getMyMemoryTranslation(String word) {
+            try {
+                String langPair = getSavedSourceLang() + "|" + getSavedLanguage();
+                String url = "https://api.mymemory.translated.net/get?q=" +
+                        java.net.URLEncoder.encode(word, "UTF-8") +
+                        "&langpair=" + java.net.URLEncoder.encode(langPair, "UTF-8");
+                android.util.Log.d("MYMEMORY", "URL: " + url);
+                java.net.URL obj = new java.net.URL(url);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(2000);
+                conn.setReadTimeout(2000);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+                reader.close();
+                String json = response.toString();
+                
+                // استخراج translatedText از JSON
+                String key = "\"translatedText\":\"";
+                int start = json.indexOf(key);
+                if (start == -1) return null;
+                start += key.length();
+                int end = json.indexOf("\"", start);
+                if (end == -1) return null;
+                String result = json.substring(start, end);
+                
+                // تبدیل unicode escape sequences
+                result = result.replace("\\u200c", "‌");
+                
+                android.util.Log.d("MYMEMORY", "Result: " + result);
+                if (result.isEmpty() || result.equals(word)) return null;
+                return result;
+            } catch (Exception e) {
+                android.util.Log.e("MYMEMORY", "Error: " + e.getMessage());
+                return null;
+            }
+        }
+
+
+
+        private void showLongTextTranslation(final String text) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        String spacedText = text;
+                        if (!text.contains(" ") && text.length() > 15) {
+                            spacedText = addSpaces(text);
+                        }
+                        String translated = getGoogleTranslation(spacedText);
+                        if (translated == null || translated.length() == 0) {
+                            Handler h = new Handler(Looper.getMainLooper());
+                            h.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    showPopupOnUI("دیکشنری کوچک", "لطفاً اینترنت رو چک کن");
+                                }
+                            });
+                            return;
+                        }
+                        final String finalT = translated;
+                        final String finalOriginal = spacedText;
+                        Handler h = new Handler(Looper.getMainLooper());
+                        h.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                showTextTranslationPopup(finalOriginal, finalT);
+                            }
+                        });
+                    } catch (Exception e) {}
+                }
+            }).start();
+        }
+
+        private void showTextTranslationPopup(String original, String translated) {
+        try {
+            final WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+            if (wm == null) return;
+
+            final LinearLayout layout = new LinearLayout(WordDetectionService.this);
+            layout.setOrientation(LinearLayout.VERTICAL);
+            layout.setClickable(true);
+            layout.setFocusable(true);
+
+            GradientDrawable bg = new GradientDrawable();
+            bg.setShape(GradientDrawable.RECTANGLE);
+            bg.setColor(Color.argb(240, 255, 255, 255));
+            bg.setCornerRadius(30);
+            bg.setStroke(2, Color.argb(100, 200, 200, 200));
+            layout.setBackground(bg);
+            layout.setPadding(40, 30, 40, 30);
+
+            TextView transText = new TextView(WordDetectionService.this);
+            transText.setText(translated);
+            transText.setTextSize(18);
+            transText.setTextColor(Color.BLACK);
+            transText.setLineSpacing(10, 1.2f);
+            transText.setPadding(0, 0, 0, 20);
+
+            // ✅ دکمه بستن در پایین پنجره
+            Button closeBtn = new Button(WordDetectionService.this);
+            closeBtn.setText("✖ بستن");
+            closeBtn.setTextColor(Color.WHITE);
+            closeBtn.setTextSize(16);
+            GradientDrawable btnBg = new GradientDrawable();
+            btnBg.setShape(GradientDrawable.RECTANGLE);
+            btnBg.setColor(Color.parseColor("#E53935")); // قرمز ملایم
+            btnBg.setCornerRadius(20);
+            closeBtn.setBackground(btnBg);
+            closeBtn.setPadding(20, 10, 20, 10);
+            
+            layout.addView(transText);
+            layout.addView(closeBtn);
+
+            int layoutType;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+            } else {
+                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
+            }
+
+            int screenWidth = getResources().getDisplayMetrics().widthPixels;
+
+            final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    (int)(screenWidth * 0.9),
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    layoutType,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                    PixelFormat.TRANSLUCENT);
+            params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+            params.y = 150;
+
+            final View popupView = layout;
+            wm.addView(popupView, params);
+
+            final Runnable closeRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    try { wm.removeView(popupView); } catch (Exception e) {}
+                }
+            };
+
+            // ✅ کلیک دکمه بستن
+            closeBtn.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    closeRunnable.run();
+                }
+            });
+
+            // کلیک بیرون پنجره
+            layout.setOnTouchListener(new View.OnTouchListener() {
+                @Override
+                public boolean onTouch(View v, android.view.MotionEvent event) {
+                    if (event.getAction() == android.view.MotionEvent.ACTION_OUTSIDE) {
+                        closeRunnable.run();
+                        return true;
+                    }
+                    return false;
+                }
+            });
+
+            // تایمر خودکار (برای مواقعی که کاربر دست نمی‌زنه)
+            int wordCount = (translated == null || translated.isEmpty()) ? 1 : translated.split("\\s+").length;
+            long displayTime = wordCount * 500L;
+            if (displayTime < 10000) displayTime = 10000;
+            if (displayTime > 30000) displayTime = 30000;
+
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(closeRunnable, displayTime);
+
+        } catch (Exception e) {}
+    }
+
+        
+
+        private String addSpaces(String text) {
+            if (text.contains(" ")) return text;
+            StringBuilder result = new StringBuilder();
+            String lower = text.toLowerCase();
+            int i = 0;
+            while (i < lower.length()) {
+                boolean found = false;
+                for (int len = Math.min(20, lower.length() - i); len >= 3; len--) {
+                    String candidate = lower.substring(i, i + len);
+                    if (db.getMeaning(candidate) != null) {
+                        if (result.length() > 0) result.append(" ");
+                        result.append(candidate);
+                        i += len;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    if (result.length() > 0 && !result.toString().endsWith(" ")) {
+                        result.append(" ");
+                    }
+                    result.append(lower.charAt(i));
+                    i++;
+                }
+            }
+            return result.toString();
+        }
+
+        @Override
+        public void onInterrupt() {}
+    }
+
+
+    // ========== جستجوی کلمه ==========
+
+
+    // ═══ متدهای UI جدید ═══
+    private boolean allServicesOn = false;
+
+    private void toggleAllServices() {
+        TextView status = findViewById(R.id.statusText);
+        TextView clipStatus = findViewById(R.id.clipboardStatus);
+        TextView ocrStatus = findViewById(R.id.ocrStatus);
+
+        allServicesOn = !allServicesOn;
+
+        if (allServicesOn) {
+            // روشن: ترجمه + کیپ‌بورد
+            WordDetectionService.translationEnabled = true;
+
+            if (!ClipboardListenerService.clipboardEnabled) {
+                ClipboardListenerService.clipboardEnabled = true;
+                try {
+                    startService(new Intent(MainActivity.this, ClipboardListenerService.class));
+                } catch (Exception e) {}
+            }
+
+            if (status != null) {
+                status.setText("● روشن");
+                status.setTextColor(getResources().getColor(R.color.status_on));
+            }
+            if (clipStatus != null) {
+                clipStatus.setText("روشن");
+                clipStatus.setTextColor(getResources().getColor(R.color.status_on));
+            }
+            Toast.makeText(this, "ترجمه و کیپ‌بورد روشن شد", Toast.LENGTH_SHORT).show();
+        } else {
+            // خاموش: همه چیز
+            WordDetectionService.translationEnabled = false;
+            ClipboardListenerService.clipboardEnabled = false;
+
+            try {
+                stopService(new Intent(MainActivity.this, ClipboardListenerService.class));
+            } catch (Exception e) {}
+
+            if (status != null) {
+                status.setText("● خاموش");
+                status.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+            if (clipStatus != null) {
+                clipStatus.setText("خاموش");
+                clipStatus.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+            if (ocrStatus != null) {
+                ocrStatus.setText("خاموش");
+                ocrStatus.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+            Toast.makeText(this, "همه سرویس‌ها خاموش شد", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void toggleClipboardService() {
+        TextView status = findViewById(R.id.clipboardStatus);
+        Button clipBtn = findViewById(R.id.clipboardButton);
+        if (clipBtn != null) clipBtn.performClick();
+
+        if (status != null) {
+            if (ClipboardListenerService.clipboardEnabled) {
+                status.setText("روشن");
+                status.setTextColor(getResources().getColor(R.color.status_on));
+            } else {
+                status.setText("خاموش");
+                status.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+        }
+    }
+
+    private void toggleOcrBubble() {
+        TextView status = findViewById(R.id.ocrStatus);
+        Button bubbleBtn = findViewById(R.id.translateButton);
+        if (bubbleBtn != null) bubbleBtn.performClick();
+
+        if (status != null) {
+            if (FloatingBubbleService.activeProjection != null) {
+                status.setText("روشن");
+                status.setTextColor(getResources().getColor(R.color.status_on));
+            } else {
+                status.setText("خاموش");
+                status.setTextColor(getResources().getColor(R.color.text_secondary));
+            }
+        }
+    }
+
+    private void showTopMenu() {
+        final String[] options = {"➕ افزودن درس", "📚 کتابخانه", "🔄 چک آپدیت", "ℹ️ درباره"};
+        new AlertDialog.Builder(this)
+            .setItems(options, (d, w) -> {
+                if (w == 0) {
+                    Button addBtn = findViewById(R.id.addButton);
+                    if (addBtn != null) addBtn.performClick();
+                } else if (w == 1) {
+                    showLibrary();
+                } else if (w == 2) {
+                    getSharedPreferences("app_prefs", MODE_PRIVATE)
+                        .edit().remove("last_update_check").apply();
+                    checkForUpdates();
+                    Toast.makeText(this, "در حال چک آپدیت...", Toast.LENGTH_SHORT).show();
+                } else if (w == 3) {
+                    new AlertDialog.Builder(this)
+                        .setTitle("Tap Translate")
+                        .setMessage("نسخه 1.0.0\n\nترجمه با لمس کلمه\nکتابخانه شخصی\nمسیر کیپ‌بورد")
+                        .setPositiveButton("باشه", null)
+                        .show();
+                }
+            })
+            .setNegativeButton("بستن", null)
+            .show();
+    }
+
+    private void openAccessibilitySettings() {
+        try {
+            // تلاش برای رفتن مستقیم به صفحه اختصاصی اپ (اندروید ۱۱ و بالاتر)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try {
+                    Intent intent = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
+                    String serviceId = getPackageName() + "/com.example.hello.MainActivity$WordDetectionService";
+                    intent.putExtra(":settings:fragment_args_key", serviceId);
+                    intent.setData(android.net.Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                    return;
+                } catch (Exception e) {
+                    // اگه نشد، برو سراغ حالت عمومی
+                }
+            }
+            
+            // حالت عمومی (برای اندروید ۱۰ و پایین‌تر یا وقتی روش بالا کار نکرد)
+            Intent intent = new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+            intent.putExtra(":settings:fragment_args_key", "com.example.hello.MainActivity$WordDetectionService");
+            intent.putExtra(":settings:show_fragment_args", getPackageName());
+            startActivity(intent);
+            
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS));
+            } catch (Exception ex) {
+                Toast.makeText(this, "خطا در باز کردن تنظیمات", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private void showSettingsMenu() {
+        final String[] options = {
+            "📖 راهنمای استفاده",
+            "🌐 انتخاب زبان",
+            "⚙️ انتخاب موتور ترجمه",
+            "🔧 تنظیمات دسترسی‌پذیری (برای حباب)",
+            "🗑 پاک کردن همه دروس",
+            "ℹ️ درباره"
+        };
+        new AlertDialog.Builder(this)
+            .setItems(options, (d, w) -> {
+                if (w == 0) {
+                    resetOnboarding();
+                } else if (w == 1) {
+                    Button langBtn = findViewById(R.id.languageButton);
+                    if (langBtn != null) langBtn.performClick();
+                } else if (w == 2) {
+                    showEngineSelection();
+                } else if (w == 3) {
+                    try {
+                        Intent intent = new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                        startActivity(intent);
+                        Toast.makeText(this, "لطفاً سرویس Tap Translate را فعال کنید", Toast.LENGTH_LONG).show();
+                    } catch (Exception e) {
+                        Toast.makeText(this, "خطا در باز کردن تنظیمات", Toast.LENGTH_SHORT).show();
+                    }
+                } else if (w == 4) {
+                    new AlertDialog.Builder(this)
+                        .setMessage("مطمئنی؟ همه دروس پاک می‌شن!")
+                        .setPositiveButton("بله", (dd, ww) -> {
+                            try {
+                                MyDatabase dbHelper = new MyDatabase(this);
+                                SQLiteDatabase db = dbHelper.getWritableDatabase();
+                                db.delete("library_lessons", null, null);
+                                db.close();
+                                Toast.makeText(this, "پاک شد", Toast.LENGTH_SHORT).show();
+                            } catch (Exception e) {}
+                        })
+                        .setNegativeButton("لغو", null)
+                        .show();
+                } else if (w == 5) {
+                    showTopMenu();
+                }
+            })
+            .setNegativeButton("بستن", null)
+            .show();
+    }
+
+    private void showEngineSelection() {
+        final String[] engines = {"خودکار (آفلاین + آنلاین)", "فقط آفلاین (ML Kit)", "فقط آنلاین (Google + MyMemory)"};
+        final String[] values = {"auto", "mlkit", "online"};
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String current = prefs.getString("translation_engine", "auto");
+        int checked = 0;
+        for(int i=0; i<values.length; i++) if(values[i].equals(current)) checked = i;
+
+        new AlertDialog.Builder(this)
+            .setTitle("انتخاب موتور ترجمه")
+            .setSingleChoiceItems(engines, checked, (d, w) -> {
+                prefs.edit().putString("translation_engine", values[w]).apply();
+                d.dismiss();
+                Toast.makeText(this, "موتور ترجمه تغییر کرد", Toast.LENGTH_SHORT).show();
+            })
+            .show();
+    }
+
+    // ========== In-App Update ==========
+    private static final String UPDATE_JSON_URL =
+        "https://raw.githubusercontent.com/Alighasemi37151/termux-android-hello/main/version.json";
+    private static final long UPDATE_CHECK_INTERVAL_MS = 24L * 60 * 60 * 1000; // 24h
+
+    private void checkForUpdates() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    SharedPreferences prefs =
+                        getSharedPreferences("app_prefs", MODE_PRIVATE);
+                    long lastCheck = prefs.getLong("last_update_check", 0);
+                    long now = System.currentTimeMillis();
+                    if (now - lastCheck < UPDATE_CHECK_INTERVAL_MS) return;
+
+                    java.net.URL url = new java.net.URL(UPDATE_JSON_URL);
+                    java.net.HttpURLConnection conn =
+                        (java.net.HttpURLConnection) url.openConnection();
+                    conn.setConnectTimeout(5000);
+                    conn.setReadTimeout(5000);
+                    conn.setRequestProperty("User-Agent", "TapTranslate");
+
+                    java.io.BufferedReader reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(conn.getInputStream()));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) sb.append(line);
+                    reader.close();
+
+                    String json = sb.toString();
+
+                    int serverVersionCode = extractJsonInt(json, "versionCode");
+                    String serverVersionName = extractJsonString(json, "versionName");
+                    final String bazaarUrl = extractJsonString(json, "bazaarUrl");
+                    final String myketUrl = extractJsonString(json, "myketUrl");
+                    final String playUrl = extractJsonString(json, "playUrl");
+                    final String changelog = extractJsonString(json, "changelog");
+                    boolean mandatory = extractJsonBoolean(json, "mandatory");
+
+                    prefs.edit().putLong("last_update_check", now).apply();
+
+                    if (serverVersionCode <= 0) return;
+
+                    PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+                    int currentVersion = info.versionCode;
+
+                    if (serverVersionCode > currentVersion) {
+                        final String svn = serverVersionName;
+                        final boolean fm = mandatory;
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                showUpdateDialog(svn, changelog, bazaarUrl, myketUrl, playUrl, fm);
+                            }
+                        });
+                    }
+                } catch (Exception e) {
+                    // silent
+                }
+            }
+        }).start();
+    }
+
+    private int extractJsonInt(String json, String key) {
+        try {
+            String p = "\"" + key + "\"";
+            int i = json.indexOf(p);
+            if (i == -1) return 0;
+            int j = json.indexOf(":", i) + 1;
+            int k = j;
+            while (k < json.length() && (Character.isDigit(json.charAt(k)) || json.charAt(k) == ' ')) k++;
+            return Integer.parseInt(json.substring(j, k).trim());
+        } catch (Exception e) { return 0; }
+    }
+
+    private String extractJsonString(String json, String key) {
+        try {
+            String p = "\"" + key + "\"";
+            int i = json.indexOf(p);
+            if (i == -1) return "";
+            int j = json.indexOf("\"", json.indexOf(":", i) + 1) + 1;
+            StringBuilder sb = new StringBuilder();
+            int k = j;
+            while (k < json.length()) {
+                char c = json.charAt(k);
+                if (c == '\\' && k + 1 < json.length()) {
+                    char n = json.charAt(k + 1);
+                    if (n == 'n') { sb.append('\n'); k += 2; continue; }
+                    if (n == 't') { sb.append('\t'); k += 2; continue; }
+                    if (n == '"') { sb.append('"'); k += 2; continue; }
+                    if (n == '\\') { sb.append('\\'); k += 2; continue; }
+                }
+                if (c == '"') break;
+                sb.append(c);
+                k++;
+            }
+            return sb.toString();
+        } catch (Exception e) { return ""; }
+    }
+
+    private boolean extractJsonBoolean(String json, String key) {
+        try {
+            String p = "\"" + key + "\"";
+            int i = json.indexOf(p);
+            if (i == -1) return false;
+            int j = json.indexOf(":", i) + 1;
+            return json.substring(j).trim().startsWith("true");
+        } catch (Exception e) { return false; }
+    }
+
+    private void showUpdateDialog(String versionName, String changelog,
+        final String bazaarUrl, final String myketUrl, final String playUrl,
+        boolean mandatory) {
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(30, 20, 30, 20);
+
+        TextView vText = new TextView(this);
+        vText.setText("نسخه جدید: " + versionName);
+        vText.setTextSize(15);
+        container.addView(vText);
+
+        TextView cTitle = new TextView(this);
+        cTitle.setText("\nتغییرات:");
+        cTitle.setTextSize(14);
+        container.addView(cTitle);
+
+        TextView cText = new TextView(this);
+        cText.setText(changelog);
+        cText.setTextSize(14);
+        cText.setPadding(0, 10, 0, 20);
+        container.addView(cText);
+
+        if (bazaarUrl != null && !bazaarUrl.isEmpty()) {
+            Button b = new Button(this);
+            b.setText("📦 دانلود از کافه‌بازار");
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) { openUrl(bazaarUrl); }
+            });
+            container.addView(b);
+        }
+        if (myketUrl != null && !myketUrl.isEmpty()) {
+            Button b = new Button(this);
+            b.setText("📦 دانلود از مایکت");
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) { openUrl(myketUrl); }
+            });
+            container.addView(b);
+        }
+        if (playUrl != null && !playUrl.isEmpty()) {
+            Button b = new Button(this);
+            b.setText("📦 دانلود از Google Play");
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) { openUrl(playUrl); }
+            });
+            container.addView(b);
+        }
+
+        ScrollView sv = new ScrollView(this);
+        sv.addView(container);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle("🎉 نسخه جدید آماده‌ست")
+            .setView(sv)
+            .setCancelable(!mandatory);
+
+        if (!mandatory) {
+            builder.setNegativeButton("بعداً", null);
+        }
+
+        builder.show();
+    }
+
+    private void openUrl(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "خطا در باز کردن لینک", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // ═══ راهنمای استفاده ═══
+    private static final String KEY_ONBOARDING_SHOWN = "onboarding_shown";
+
+    private void showOnboardingIfFirstTime() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean shown = prefs.getBoolean(KEY_ONBOARDING_SHOWN, false);
+        if (!shown) {
+            showOnboarding(1);
+        }
+    }
+
+    private void showOnboarding(final int step) {
+        String title = "";
+        String content = "";
+
+        if (step == 1) {
+            title = "📷 حباب شناور";
+            content = "برای ترجمه فوری روی هر صفحه:\n\n" +
+                "• دکمه گرد وسط رو بزن تا حباب روشن شه\n" +
+                "• روی هر کلمه انگلیسی روی صفحه لمس کن\n" +
+                "• معنی فارسی فوری نمایش داده می‌شه\n\n" +
+                "💡 نکات:\n" +
+                "• تک کلیک روی حباب: اسکن صفحه\n" +
+                "• نگه داشتن: باز شدن اپ\n" +
+                "• دابل کلیک: خاموش کردن حباب\n" +
+                "• کشیدن: جابجایی حباب\n\n" +
+                "🎁 محتویات: هر متنی که کپی کنی، خودکار ترجمه می‌شه!";
+        } else if (step == 2) {
+            title = "📋 مسیر کیپ‌بورد";
+            content = "ترجمه خودکار هر چیزی که کپی کنی:\n\n" +
+                "• کارت «مسیر کیپ‌بورد» رو بزن\n" +
+                "• حالا هر متن انگلیسی که کپی کنی\n" +
+                "• معنی فارسی فوری نمایش داده می‌شه\n\n" +
+                "💡 کاربرد:\n" +
+                "• از مرورگر متن کپی کن\n" +
+                "• از واتساپ، تلگرام\n" +
+                "• از هر اپی";
+        } else if (step == 3) {
+            title = "📚 کتابخانه و جستجو";
+            content = "ذخیره متن‌ها و جستجوی کلمات:\n\n" +
+                "📚 کتابخانه:\n" +
+                "• روی کارت کتابخانه بزن\n" +
+                "• از گالری عکس بگیر (OCR)\n" +
+                "• یا متن دستی بنویس\n" +
+                "• درس‌ها با شماره ذخیره می‌شن\n\n" +
+                "🔍 جستجو:\n" +
+                "• نوار جستجو رو بزن\n" +
+                "• کلمه بنویس، Enter بزن\n" +
+                "• معنی + منبع نمایش داده می‌شه\n\n" +
+                "🌐 تغییر زبان:\n" +
+                "• کارت زبان‌ها رو بزن\n" +
+                "• ۱۴ زبان در دسترس\n" +
+                "• دکمه ⇄ جابجایی";
+        }
+
+        final int currentStep = step;
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(content)
+            .setCancelable(false);
+
+        if (step < 3) {
+            builder.setPositiveButton("بعدی →", (d, w) -> showOnboarding(currentStep + 1));
+            builder.setNegativeButton("رد کردن", (d, w) -> markOnboardingShown());
+        } else {
+            builder.setPositiveButton("شروع استفاده ✅", (d, w) -> markOnboardingShown());
+            builder.setNegativeButton("بعداً", (d, w) -> markOnboardingShown());
+        }
+
+        AlertDialog dialog = builder.create();
+        dialog.show();
+
+        // رنگ دکمه‌ها
+        try {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(
+                getResources().getColor(R.color.brand_primary_light));
+            if (dialog.getButton(AlertDialog.BUTTON_NEGATIVE) != null) {
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(
+                    getResources().getColor(R.color.text_secondary));
+            }
+        } catch (Exception e) {}
+    }
+
+    private void markOnboardingShown() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prefs.edit().putBoolean(KEY_ONBOARDING_SHOWN, true).apply();
+    }
+
+    private void resetOnboarding() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prefs.edit().putBoolean(KEY_ONBOARDING_SHOWN, false).apply();
+        showOnboarding(1);
+    }
+
+    // ═══ چک دانلود مدل ML Kit برای زبان انتخاب شده ═══
+    private void checkAndPromptModelDownload(final String src, final String tgt) {
+        if (!OfflineTranslator.isGmsAvailable(this)) {
+            return; // GMS نیست، هیچی نگو
+        }
+        OfflineTranslator.isModelDownloaded(this, src, tgt, new OfflineTranslator.ModelStatusCallback() {
+            @Override
+            public void onStatus(boolean isDownloaded) {
+                if (isDownloaded) return;
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        String srcName = getLanguageName(src);
+                        String tgtName = getLanguageName(tgt);
+
+                        new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("📥 دانلود مدل آفلاین")
+                            .setMessage("برای ترجمه آفلاین از " + srcName + " به " + tgtName +
+                                " نیاز به دانلود مدل (حدود ۳۰ مگ) داریم.\n\n" +
+                                "این کار یک بار انجام می‌شه و بعد از اون آفلاین کار می‌کنه.")
+                            .setPositiveButton("دانلود", (d, w) -> downloadOfflineModel(src, tgt))
+                            .setNegativeButton("بعداً", null)
+                            .show();
+                    }
+                });
+            }
+        });
+    }
+
+    private void downloadOfflineModel(final String src, final String tgt) {
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(this);
+        pd.setTitle("در حال دانلود...");
+        pd.setMessage("لطفاً صبر کن");
+        pd.setCancelable(false);
+        pd.setProgressStyle(android.app.ProgressDialog.STYLE_SPINNER);
+        pd.show();
+
+        OfflineTranslator.downloadModel(this, src, tgt, new OfflineTranslator.DownloadCallback() {
+            @Override
+            public void onProgress(int percent) {
+                pd.setMessage("دانلود: " + percent + "%");
+            }
+
+            @Override
+            public void onSuccess() {
+                pd.dismiss();
+                Toast.makeText(MainActivity.this,
+                    "✅ مدل دانلود شد! حالا آفلاین کار می‌کنه",
+                    Toast.LENGTH_LONG).show();
+            }
+
+            @Override
+            public void onFailure(final String error) {
+                pd.dismiss();
+                Toast.makeText(MainActivity.this,
+                    "❌ دانلود ناموفق: " + error,
+                    Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void showSearchDialog() {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(30, 20, 30, 20);
+
+        final EditText input = new EditText(this);
+        input.setHint("کلمه انگلیسی...");
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        container.addView(input);
+
+        final TextView result = new TextView(this);
+        result.setTextSize(16);
+        result.setPadding(0, 30, 0, 30);
+        result.setTextIsSelectable(true);
+        container.addView(result);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.END);
+
+        final Button copyBtn = new Button(this);
+        copyBtn.setText("📋 کپی");
+        copyBtn.setVisibility(View.GONE);
+        copyBtn.setOnClickListener(v -> {
+            String t = result.getText().toString();
+            if (!t.isEmpty()) {
+                ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                cm.setPrimaryClip(ClipData.newPlainText("word", t));
+                Toast.makeText(this, "کپی شد", Toast.LENGTH_SHORT).show();
+            }
+        });
+        actions.addView(copyBtn);
+        container.addView(actions);
+
+        ScrollView sv = new ScrollView(this);
+        sv.addView(container);
+
+        String langInfo = getLanguageShort(getSavedSourceLang()) + " → " + getLanguageShort(getSavedLanguage());
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("🔍 جستجو (" + langInfo + ")")
+            .setView(sv)
+            .setPositiveButton("جستجو", null)
+            .setNegativeButton("بستن", null)
+            .create();
+        dialog.show();
+
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH
+                || actionId == EditorInfo.IME_ACTION_DONE) {
+                doSearch(input, result, copyBtn);
+                return true;
+            }
+            return false;
+        });
+
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v ->
+            doSearch(input, result, copyBtn));
+    }
+
+    private void doSearch(final EditText input, final TextView result, final Button copyBtn) {
+        final String word = input.getText().toString().trim().toLowerCase();
+        if (word.isEmpty()) {
+            result.setText("کلمه‌ای وارد کن");
+            copyBtn.setVisibility(View.GONE);
+            return;
+        }
+
+        result.setText("در حال جستجو...");
+        copyBtn.setVisibility(View.GONE);
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String meaning = null;
+                String source = "";
+
+                // ⚡ ML Kit اول
+                if (OfflineTranslator.isGmsAvailable(MainActivity.this)) {
+                    String ml = translateOffline(MainActivity.this, word,
+                        getSavedSourceLang(), getSavedLanguage());
+                    if (ml != null && !ml.isEmpty() && !ml.equals(word)) {
+                        meaning = ml;
+                        source = "📱 ML Kit";
+                    }
+                }
+
+                // 🌐 Google + MyMemory موازی
+                if (meaning == null) {
+                    String result = smartTranslateFull(MainActivity.this, word,
+                        getSavedSourceLang(), getSavedLanguage());
+                    if (result != null) {
+                        meaning = result;
+                        source = "🌐 آنلاین";
+                    }
+                }
+
+                // 📚 DB
+                if (meaning == null) {
+                    try {
+                        MyDatabase db = new MyDatabase(MainActivity.this);
+                        String d = db.getMeaning(word);
+                        if (d != null && !d.isEmpty()) {
+                            meaning = d;
+                            source = "📚 دیتابیس";
+                        }
+                    } catch (Exception e) {}
+                }
+
+                final String fm = meaning;
+                final String fs = source;
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (fm == null) {
+                            result.setText("معنی پیدا نشد");
+                            copyBtn.setVisibility(View.GONE);
+                        } else {
+                            result.setText(fm + "\n\n" + fs);
+                            copyBtn.setVisibility(View.VISIBLE);
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private String searchGoogleTranslation(String word) {
+        // اول با زبان مبدأ انتخاب شده
+        String r = MainActivity.callGoogleTranslate(word, getSavedSourceLang(), getSavedLanguage());
+        if (r != null && !r.trim().isEmpty() && !r.equals(word)) {
+            return r;
+        }
+        // اگه نتیجه نداد، با auto detect
+        String autoR = MainActivity.callGoogleTranslate(word, "auto", getSavedLanguage());
+        if (autoR != null && !autoR.trim().isEmpty() && !autoR.equals(word)) {
+            return autoR;
+        }
+        return r;
+    }
+
+
+
+    private String searchMyMemoryTranslation(String word) {
+        try {
+            String langPair = getSavedSourceLang() + "|" + getSavedLanguage();
+            String url = "https://api.mymemory.translated.net/get?q="
+                + java.net.URLEncoder.encode(word, "UTF-8")
+                + "&langpair=" + langPair;
+            java.net.URL obj = new java.net.URL(url);
+            java.net.HttpURLConnection conn =
+                (java.net.HttpURLConnection) obj.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(conn.getInputStream()));
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) response.append(line);
+            reader.close();
+            String json = response.toString();
+            String key = "\"translatedText\":\"";
+            int start = json.indexOf(key);
+            if (start == -1) return null;
+            start += key.length();
+            int end = json.indexOf("\"", start);
+            if (end == -1) return null;
+            return json.substring(start, end);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void showLibrary() {
+        try {
+            MyDatabase dbHelper = new MyDatabase(this);
+            SQLiteDatabase db = dbHelper.getReadableDatabase();
+            ensureLessonsTable(db);
+
+            Cursor cursor = db.rawQuery(
+                "SELECT id, title, text FROM library_lessons ORDER BY created_at DESC",
+                null
+            );
+
+            final ArrayList<Long> lessonIds = new ArrayList<>();
+            final ArrayList<String> lessonTitles = new ArrayList<>();
+            final ArrayList<String> lessonTexts = new ArrayList<>();
+
+            while (cursor.moveToNext()) {
+                lessonIds.add(cursor.getLong(0));
+                lessonTitles.add(cursor.getString(1));
+                lessonTexts.add(cursor.getString(2));
+            }
+
+            cursor.close();
+            db.close();
+
+            if (lessonTitles.isEmpty()) {
+                new AlertDialog.Builder(this)
+                    .setTitle("📚 کتابخانه من")
+                    .setMessage("هنوز درسی ذخیره نشده است.")
+                    .setPositiveButton("باشه", null)
+                    .show();
+                return;
+            }
+
+            LinearLayout root = new LinearLayout(this);
+            root.setOrientation(LinearLayout.VERTICAL);
+
+            for (int i = 0; i < lessonTitles.size(); i++) {
+                final long lessonId = lessonIds.get(i);
+                final String lessonTitle = lessonTitles.get(i);
+                final String lessonText = lessonTexts.get(i);
+
+                LinearLayout row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(30, 25, 15, 25);
+
+                TextView tv = new TextView(this);
+                tv.setText(lessonTitle);
+                tv.setTextSize(17);
+                tv.setLayoutParams(new LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                tv.setOnClickListener(v -> openLesson(lessonTitle, lessonText));
+                row.addView(tv);
+
+                ImageButton menuBtn = new ImageButton(this);
+                menuBtn.setImageResource(android.R.drawable.ic_menu_more);
+                menuBtn.setBackgroundColor(0x00000000);
+                menuBtn.setOnClickListener(v ->
+                    showLessonMenu(lessonTitle, lessonText, lessonId));
+                row.addView(menuBtn);
+
+                root.addView(row);
+
+                View divider = new View(this);
+                divider.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 1));
+                divider.setBackgroundColor(0xFFE0E0E0);
+                root.addView(divider);
+            }
+
+            ScrollView scrollView = new ScrollView(this);
+            scrollView.addView(root);
+
+            new AlertDialog.Builder(this)
+                .setTitle("📚 کتابخانه من")
+                .setView(scrollView)
+                .setNegativeButton("بستن", null)
+                .show();
+
+        } catch (Exception e) {
+            Toast.makeText(this,
+                "خطا در باز کردن کتابخانه: " + e.getMessage(),
+                Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void ensureLessonsTable(SQLiteDatabase db) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS library_lessons (" +
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+            "title TEXT NOT NULL, " +
+            "text TEXT NOT NULL, " +
+            "original_image TEXT, " +
+            "created_at INTEGER)"
+        );
+    }
+
+    private void openLesson(String title, String text) {
+        TextView lessonText = new TextView(this);
+        lessonText.setText(text);
+        lessonText.setTextSize(17);
+        lessonText.setPadding(30, 20, 30, 20);
+        lessonText.setTextIsSelectable(true);
+        lessonText.setGravity(Gravity.TOP);
+
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.addView(lessonText);
+
+        new AlertDialog.Builder(this)
+            .setTitle("📖 " + title)
+            .setView(scrollView)
+            .setPositiveButton("بستن", null)
+            .show();
+    }
+
+    private void showLessonMenu(String title, String text, long id) {
+        final String[] options = {"📋 کپی متن", "🗑 حذف درس"};
+
+        new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(options, (dialog, which) -> {
+                if (which == 0) {
+                    ClipboardManager cm =
+                        (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("lesson", text));
+                    Toast.makeText(this, "متن کپی شد", Toast.LENGTH_SHORT).show();
+                } else if (which == 1) {
+                    new AlertDialog.Builder(this)
+                        .setTitle("حذف درس")
+                        .setMessage("مطمئنی می‌خوای «" + title + "» رو حذف کنی؟")
+                        .setPositiveButton("بله، حذف کن", (d, w) -> {
+                            deleteLesson(id);
+                            Toast.makeText(this, "درس حذف شد", Toast.LENGTH_SHORT).show();
+                            showLibrary();
+                        })
+                        .setNegativeButton("لغو", null)
+                        .show();
+                }
+            })
+            .setNegativeButton("لغو", null)
+            .show();
+    }
+
+    private void deleteLesson(long id) {
+        try {
+            MyDatabase dbHelper = new MyDatabase(this);
+            SQLiteDatabase db = dbHelper.getWritableDatabase();
+            db.delete("library_lessons", "id = ?",
+                new String[]{String.valueOf(id)});
+            db.close();
+        } catch (Exception e) {
+            Toast.makeText(this, "خطا در حذف: " + e.getMessage(),
+                Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void saveLibraryLessonAutoNumber(String text, String customTitle) {
+        if (text == null || text.trim().isEmpty()) {
+            Toast.makeText(this, "متن خالی است", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        try {
+            MyDatabase dbHelper = new MyDatabase(this);
+            SQLiteDatabase db = dbHelper.getWritableDatabase();
+            ensureLessonsTable(db);
+
+            long maxId = 0;
+            Cursor c = db.rawQuery(
+                "SELECT id FROM library_lessons ORDER BY id DESC LIMIT 1", null);
+            if (c.moveToFirst()) maxId = c.getLong(0);
+            c.close();
+
+            int nextNum = (int) (maxId + 1);
+            String title;
+            if (customTitle != null && !customTitle.trim().isEmpty()) {
+                title = customTitle.trim();
+            } else {
+                title = "درس " + toPersianNumber(nextNum);
+            }
+
+            ContentValues values = new ContentValues();
+            values.put("title", title);
+            values.put("text", text.trim());
+            values.putNull("original_image");
+            values.put("created_at", System.currentTimeMillis());
+
+            long id = db.insert("library_lessons", null, values);
+            db.close();
+
+            if (id != -1) {
+                Toast.makeText(this, title + " ذخیره شد", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "ذخیره ناموفق بود", Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "خطا: " + e.getMessage(),
+                Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private String toPersianNumber(int n) {
+        String s = String.valueOf(n);
+        StringBuilder sb = new StringBuilder();
+        for (char ch : s.toCharArray()) {
+            switch (ch) {
+                case '0': sb.append('۰'); break;
+                case '1': sb.append('۱'); break;
+                case '2': sb.append('۲'); break;
+                case '3': sb.append('۳'); break;
+                case '4': sb.append('۴'); break;
+                case '5': sb.append('۵'); break;
+                case '6': sb.append('۶'); break;
+                case '7': sb.append('۷'); break;
+                case '8': sb.append('۸'); break;
+                case '9': sb.append('۹'); break;
+                default: sb.append(ch);
+            }
+        }
+        return sb.toString();
+    }
+
+    private void showEditableTextDialog(String initialText) {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(30, 20, 30, 20);
+
+        final EditText titleInput = new EditText(this);
+        titleInput.setHint("عنوان (خالی = درس بعدی)");
+        titleInput.setSingleLine(true);
+        container.addView(titleInput);
+
+        final EditText editText = new EditText(this);
+        editText.setText(initialText);
+        editText.setTextSize(16);
+        editText.setGravity(Gravity.TOP | Gravity.START);
+        editText.setMinLines(5);
+        editText.setMaxLines(12);
+        editText.setTextIsSelectable(true);
+        container.addView(editText);
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.END);
+        buttons.setPadding(0, 20, 0, 0);
+
+        final AlertDialog[] dialogHolder = new AlertDialog[1];
+
+        Button copyBtn = new Button(this);
+        copyBtn.setText("📋 کپی");
+        copyBtn.setOnClickListener(v -> {
+            ClipboardManager cm =
+                (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText(
+                "ocr", editText.getText().toString()));
+            Toast.makeText(this, "کپی شد", Toast.LENGTH_SHORT).show();
+        });
+        buttons.addView(copyBtn);
+
+        Button saveBtn = new Button(this);
+        saveBtn.setText("💾 ذخیره درس");
+        saveBtn.setOnClickListener(v -> {
+            String finalText = editText.getText().toString().trim();
+            if (finalText.isEmpty()) {
+                Toast.makeText(this, "متن خالی است", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String customTitle = titleInput.getText().toString().trim();
+            saveLibraryLessonAutoNumber(finalText, customTitle);
+            if (dialogHolder[0] != null) dialogHolder[0].dismiss();
+        });
+        buttons.addView(saveBtn);
+
+        container.addView(buttons);
+
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.addView(container);
+
+        dialogHolder[0] = new AlertDialog.Builder(this)
+            .setTitle("📝 متن")
+            .setView(scrollView)
+            .setNegativeButton("بستن", null)
+            .create();
+        dialogHolder[0].show();
+    }
+
+    private void saveLibraryLesson(String title, String text) {
+        if (title == null || title.trim().isEmpty()) {
+            title = "درس جدید";
+        }
+
+        if (text == null || text.trim().isEmpty()) {
+            Toast.makeText(this, "متن درس خالی است.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        try {
+            MyDatabase dbHelper = new MyDatabase(this);
+            SQLiteDatabase db = dbHelper.getWritableDatabase();
+
+            ContentValues values = new ContentValues();
+            values.put("title", title.trim());
+            values.put("text", text);
+            values.putNull("original_image");
+            values.put("created_at", System.currentTimeMillis());
+
+            long id = db.insert("library_lessons", null, values);
+            db.close();
+
+            if (id != -1) {
+                Toast.makeText(this, "درس با موفقیت ذخیره شد.", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "ذخیره درس ناموفق بود.", Toast.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "خطا در ذخیره درس: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        appContext = this;
+
+        final TextView resultText = findViewById(R.id.resultText);
+        Button translateButton = findViewById(R.id.translateButton);
+        Button manualTranslateButton = findViewById(R.id.manualTranslateButton);
+        Button clipboardButton = findViewById(R.id.clipboardButton);
+        clipboardButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (!ClipboardListenerService.clipboardEnabled) {
+                    ClipboardListenerService.clipboardEnabled = true;
+                    startService(new Intent(MainActivity.this, ClipboardListenerService.class));
+                    clipboardButton.setText("📋 خاموش کردن مسیر کپی");
+                    resultText.setText("مسیر کپی فعال شد.");
+                } else {
+                    ClipboardListenerService.clipboardEnabled = false;
+                    stopService(new Intent(MainActivity.this, ClipboardListenerService.class));
+                    clipboardButton.setText("📋 فعال‌سازی مسیر کپی");
+                    resultText.setText("مسیر کپی خاموش شد.");
+                }
+            }
+        });
+
+        // ========== دکمه انتخاب زبان ==========
+        
+        // چک آپدیت
+        checkForUpdates();
+
+        // راهنمای اول‌بار
+        showOnboardingIfFirstTime();
+
+        // ═══════════════════════════════════
+        // اتصال دکمه‌های UI جدید
+        // ═══════════════════════════════════
+
+        ImageButton powerButton = findViewById(R.id.powerButton);
+        powerButton.setOnClickListener(v -> {
+            // ✅ اگه سرویس‌ها فعالن، خاموش کن (toggle)
+            if (allServicesOn) {
+                // خاموش کردن همه چیز
+                allServicesOn = false;
+                
+                // توقف MediaProjection
+                if (FloatingBubbleService.activeProjection != null) {
+                    try {
+                        FloatingBubbleService.activeProjection.stop();
+                        FloatingBubbleService.activeProjection = null;
+                    } catch (Exception e) {}
+                }
+                
+                // ریست متغیرها
+                FloatingBubbleService.mediaProjectionData = null;
+                FloatingBubbleService.mediaProjectionResultCode = 0;
+                FloatingBubbleService.isScanModeActive = false;
+                FloatingBubbleService.isStudyModeActive = false;
+                
+                // بستن لایه‌های شناور
+                if (accessibilityServiceInstance != null) {
+                    try {
+                        accessibilityServiceInstance.stopStudyMode();
+                    } catch (Exception e) {}
+                }
+                
+                // توقف سرویس‌ها
+                stopService(new Intent(MainActivity.this, FloatingBubbleService.class));
+                stopService(new Intent(MainActivity.this, ClipboardListenerService.class));
+                
+                // غیرفعال کردن ترجمه
+                WordDetectionService.translationEnabled = false;
+                
+                // بروزرسانی UI
+                TextView status = findViewById(R.id.statusText);
+                if (status != null) {
+                    status.setText("● خاموش");
+                    status.setTextColor(getResources().getColor(R.color.text_secondary));
+                }
+                
+                Toast.makeText(MainActivity.this, "همه سرویس‌ها خاموش شدند", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            // ✅ روشن کردن: بررسی دسترسی‌پذیری
+            String enabledServices = android.provider.Settings.Secure.getString(
+                getContentResolver(),
+                android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            );
+            boolean isAccessibilityEnabled = enabledServices != null && enabledServices.contains(getPackageName());
+
+            if (!isAccessibilityEnabled) {
+                new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("فعال‌سازی دسترسی‌پذیری")
+                    .setMessage("برای استفاده از حباب شناور، باید دسترسی‌پذیری را روشن کنید.\n\n📌 راهنما:\nاگر گوشی شما شیائومی است و گزینه Tap Translate را پیدا نکردید، در صفحه باز شده روی «برنامه‌های نصب شده» (Installed apps) یا «برنامه‌های دانلود شده» (Downloaded apps) کلیک کنید.")
+                    .setPositiveButton("رفتن به تنظیمات", (d, w) -> {
+                        openAccessibilitySettings();
+                        Toast.makeText(MainActivity.this, "لطفاً سرویس Tap Translate را روشن کنید", Toast.LENGTH_LONG).show();
+                    })
+                    .setNegativeButton("لغو", null)
+                    .show();
+            } else {
+                allServicesOn = true;
+                toggleAllServices();
+                
+                // بروزرسانی UI
+                TextView status = findViewById(R.id.statusText);
+                if (status != null) {
+                    status.setText("● روشن");
+                    status.setTextColor(getResources().getColor(R.color.status_on));
+                }
+            }
+        });
+
+        LinearLayout searchBar = findViewById(R.id.searchBar);
+        searchBar.setOnClickListener(v -> showSearchDialog());
+
+        ImageButton settingsButton = findViewById(R.id.settingsButton);
+        settingsButton.setOnClickListener(v -> showSettingsMenu());
+
+        ImageButton menuButton = findViewById(R.id.menuButton);
+        menuButton.setOnClickListener(v -> showTopMenu());
+
+        LinearLayout clipboardCard = findViewById(R.id.clipboardCard);
+        clipboardCard.setOnClickListener(v -> toggleClipboardService());
+
+        LinearLayout ocrCard = findViewById(R.id.ocrCard);
+        ocrCard.setOnClickListener(v -> toggleOcrBubble());
+
+        LinearLayout libraryCard = findViewById(R.id.libraryCard);
+        libraryCard.setOnClickListener(v -> showLibrary());
+
+        ImageButton swapLangButton = findViewById(R.id.swapLangButton);
+        swapLangButton.setOnClickListener(v -> swapLanguages());
+
+        // کارت زبان‌ها: کلیک روی مبدأ و مقصد
+        TextView srcLangText = findViewById(R.id.sourceLangText);
+        if (srcLangText != null) {
+            srcLangText.setOnClickListener(v -> showSourceLangDialog());
+        }
+        TextView tgtLangText = findViewById(R.id.targetLangText);
+        if (tgtLangText != null) {
+            tgtLangText.setOnClickListener(v -> showLanguageDialog(null));
+        }
+
+        // نمایش اولیه زبان‌ها
+        updateLanguageUI();
+
+
+        Button addButton = findViewById(R.id.addButton);
+        addButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                final String[] options = {
+                    "📷 اسکن از گالری (OCR)",
+                    "📋 کپی از کلیپ‌بورد",
+                    "⌨️ متن دستی"
+                };
+
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("➕ افزودن به کتابخانه")
+                        .setItems(options, (dialog, which) -> {
+                            if (which == 0) {
+                                pickImageFromGallery();
+                            } else if (which == 1) {
+                                ClipboardManager clipboard =
+                                        (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                                if (clipboard != null && clipboard.hasPrimaryClip()) {
+                                    ClipData clip = clipboard.getPrimaryClip();
+                                    if (clip != null && clip.getItemCount() > 0) {
+                                        String text = clip.getItemAt(0)
+                                                .coerceToText(MainActivity.this).toString();
+                                        resultText.setText(text);
+                                        showEditableTextDialog(text);
+                                    }
+                                } else {
+                                    Toast.makeText(MainActivity.this,
+                                            "کلیپ‌بورد خالیه", Toast.LENGTH_SHORT).show();
+                                }
+                            } else if (which == 2) {
+                                showEditableTextDialog("");
+                            }
+                        })
+                        .setNegativeButton("لغو", null)
+                        .show();
+            }
+        });
+
+        Button searchButton = findViewById(R.id.searchButton);
+        searchButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showSearchDialog();
+            }
+        });
+
+        Button libraryButton = findViewById(R.id.libraryButton);
+        libraryButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showLibrary();
+            }
+        });
+
+        Button languageButton = findViewById(R.id.languageButton);
+        languageButton.setText("انتخاب زبان (" + getSavedLanguageName() + ")");
+        languageButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showLanguageDialog(languageButton);
+            }
+        });
+
+
+        // ========== دکمه خاموش کردن حباب ==========
+        Button stopButton = findViewById(R.id.stopButton);
+        stopButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // ✅ خاموش کردن همه چیز (حباب + حالت مطالعه + سرویس‌ها)
+                
+                // ۱. توقف MediaProjection
+                if (FloatingBubbleService.activeProjection != null) {
+                    try {
+                        FloatingBubbleService.activeProjection.stop();
+                        FloatingBubbleService.activeProjection = null;
+                    } catch (Exception e) {}
+                }
+
+                // ۲. ریست کردن حالت‌های سراسری (مهم!)
+                FloatingBubbleService.mediaProjectionData = null;
+                FloatingBubbleService.mediaProjectionResultCode = 0;
+                FloatingBubbleService.isScanModeActive = false;
+                FloatingBubbleService.isStudyModeActive = false;
+
+                // ۳. توقف سرویس حباب
+                Intent serviceIntent = new Intent(MainActivity.this, FloatingBubbleService.class);
+                stopService(serviceIntent);
+                
+                // ۴. توقف سرویس کیپ‌بورد
+                Intent clipboardIntent = new Intent(MainActivity.this, ClipboardListenerService.class);
+                stopService(clipboardIntent);
+
+                // ۵. غیرفعال کردن ترجمه
+                WordDetectionService.translationEnabled = false;
+
+                // ۶. بستن هر پنجره‌ی شناور روی صفحه
+                if (accessibilityServiceInstance != null) {
+                    try {
+                        accessibilityServiceInstance.hideScanOverlay();
+                    } catch (Exception e) {}
+                }
+
+                // ۷. پیام
+                Toast.makeText(MainActivity.this, "همه سرویس‌ها و حباب خاموش شدند", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        // ========== دکمه ترجمه کل صفحه (OCR) ==========
+        manualTranslateButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                pickImageFromGallery();
+            }
+        });
+
+        Button toggleTranslateButton = findViewById(R.id.toggleTranslateButton);
+        toggleTranslateButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (WordDetectionService.translationEnabled) {
+                    WordDetectionService.translationEnabled = false;
+                    toggleTranslateButton.setText("روشن کردن ترجمه");
+                    resultText.setText("ترجمه خاموش شد.");
+                } else {
+                    WordDetectionService.translationEnabled = true;
+                    toggleTranslateButton.setText("خاموش کردن ترجمه");
+                    resultText.setText("ترجمه روشن شد.");
+                }
+            }
+        });
+
+        translateButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // ۱. بررسی دسترسی Overlay
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (!Settings.canDrawOverlays(MainActivity.this)) {
+                        Toast.makeText(MainActivity.this, "دسترسی Overlay غیرفعاله!", Toast.LENGTH_LONG).show();
+                        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                        return;
+                    }
+                }
+
+                // ۲. درخواست اجازه MediaProjection از خود MainActivity
+                MediaProjectionManager projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+                startActivityForResult(projectionManager.createScreenCaptureIntent(), 2000);
+
+                resultText.setText("لطفاً اجازه ضبط صفحه را بدهید...");
+            }
+        });
+    }
+    
+    
+    // ========== متدهای انتخاب زبان ==========
+    private static final String PREFS_NAME = "app_prefs";
+    private static final String KEY_LANGUAGE = "selected_language";
+    private static final String KEY_SOURCE_LANG = "selected_source_language";
+
+    // لیست زبان‌ها: {code, نام بومی, کد ۲حرفی}
+    public static final String[][] LANGUAGES = {
+        {"en", "English",   "EN"},
+        {"fa", "فارسی",     "FA"},
+        {"ar", "العربية",   "AR"},
+        {"tr", "Türkçe",    "TR"},
+        {"fr", "Français",  "FR"},
+        {"de", "Deutsch",   "DE"},
+        {"es", "Español",   "ES"},
+        {"ru", "Русский",   "RU"},
+        {"zh", "中文",       "ZH"},
+        {"ja", "日本語",     "JA"},
+        {"ko", "한국어",     "KO"},
+        {"hi", "हिन्दी",     "HI"},
+        {"it", "Italiano",  "IT"},
+        {"pt", "Português", "PT"}
+    };
+
+    // ═══ تبدیل \\uXXXX به کاراکتر یونیکد ═══
+    // ═══ پاک‌سازی هوشمند متن ═══
+    // ═══ ترجمه آفلاین با ML Kit (با انتظار حداکثر ۴ ثانیه) ═══
+    public static String translateOffline(final Context ctx, final String text,
+                                            final String src, final String tgt) {
+        if (!OfflineTranslator.isGmsAvailable(ctx)) return null;
+        if (text == null || text.trim().isEmpty()) return null;
+
+        final String[] result = {null};
+        final Object lock = new Object();
+        OfflineTranslator.translate(ctx, text, src, tgt, new OfflineTranslator.Callback() {
+            @Override
+            public void onSuccess(String translated) {
+                synchronized (lock) {
+                    result[0] = translated;
+                    lock.notify();
+                }
+            }
+            @Override
+            public void onFailure(String error) {
+                synchronized (lock) {
+                    lock.notify();
+                }
+            }
+        });
+        synchronized (lock) {
+            try { lock.wait(4000); } catch (InterruptedException e) {}
+        }
+        return result[0];
+    }
+
+    // ═══ تابع مشترک MyMemory (بهبود یافته) ═══
+    public static String callMyMemory(String word, String srcLang, String tgtLang) {
+        try {
+            String langPair = srcLang + "|" + tgtLang;
+            String url = "https://api.mymemory.translated.net/get?q="
+                + java.net.URLEncoder.encode(word, "UTF-8")
+                + "&langpair=" + java.net.URLEncoder.encode(langPair, "UTF-8")
+                + "&de=taptranslate@example.com";
+
+            java.net.URL obj = new java.net.URL(url);
+            java.net.HttpURLConnection conn =
+                (java.net.HttpURLConnection) obj.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestProperty("User-Agent",
+                "Mozilla/5.0 (Android) TapTranslate/1.0");
+
+            int code = conn.getResponseCode();
+            if (code != 200) return null;
+
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(conn.getInputStream(), "UTF-8"));
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) response.append(line);
+            reader.close();
+            String json = response.toString();
+
+            if (json.contains("MYMEMORY WARNING") ||
+                json.contains("AVAILABLE FREE TRANSLATIONS") ||
+                json.contains("INVALID LANGUAGE PAIR") ||
+                json.contains("QUERY LENGTH LIMIT")) {
+                return null;
+            }
+
+            String key = "\"translatedText\":\"";
+            int start = json.indexOf(key);
+            if (start == -1) return null;
+            start += key.length();
+            int end = json.indexOf("\"", start);
+            if (end == -1) return null;
+            String result = json.substring(start, end);
+
+            result = unescapeUnicode(result);
+            result = result.replace("&quot;", "\"")
+                          .replace("&#39;", "'")
+                          .replace("&amp;", "&")
+                          .replace("&lt;", "<")
+                          .replace("&gt;", ">");
+
+            if (result.isEmpty() || result.equalsIgnoreCase(word)) return null;
+            return result;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // ═══ Google Translate (نسخه سراسری) ═══
+    public static String callGoogleTranslate(String word, String srcLang, String tgtLang) {
+        try {
+            String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl="
+                + srcLang + "&tl=" + tgtLang + "&dt=t&q="
+                + java.net.URLEncoder.encode(word, "UTF-8");
+            java.net.URL obj = new java.net.URL(url);
+            java.net.HttpURLConnection conn =
+                (java.net.HttpURLConnection) obj.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(conn.getInputStream(), "UTF-8"));
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) response.append(line);
+            reader.close();
+            String json = response.toString();
+            int start = json.indexOf("[[[\"");
+            if (start == -1) return null;
+            start += 4;
+            int end = json.indexOf("\"", start);
+            if (end == -1) return null;
+            return unescapeUnicode(json.substring(start, end));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // ═══ ترجمه هوشمند: ML Kit → (Google + MyMemory موازی) → DB ═══
+    public static String smartTranslateFull(final Context ctx, final String text,
+                                              final String src, final String tgt) {
+        if (text == null || text.trim().isEmpty()) return null;
+        final String word = text.trim();
+
+        SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String engine = prefs.getString("translation_engine", "auto");
+
+        // ⚡ مرحله ۱: ML Kit (اگر کاربر آنلاین-فقط رو انتخاب نکرده باشه)
+        if (!engine.equals("online") && OfflineTranslator.isGmsAvailable(ctx)) {
+            String ml = translateOffline(ctx, word, src, tgt);
+            if (ml != null && !ml.isEmpty() && !ml.equals(word)) {
+                return "[ML Kit] " + ml; // ✅ نمایش منبع
+            }
+        }
+
+        // 🌐 مرحله ۲ و ۳: آنلاین (اگر کاربر آفلاین-فقط رو انتخاب نکرده باشه)
+        if (!engine.equals("mlkit")) {
+            final String[] gResult = {null};
+            final Object gLock = new Object();
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String r = null;
+                    try { r = callGoogleTranslate(word, src, tgt); } catch (Exception e) {}
+                    synchronized (gLock) { gResult[0] = r; gLock.notify(); }
+                }
+            }).start();
+            synchronized (gLock) {
+                try { gLock.wait(3000); } catch (InterruptedException e) {}
+            }
+            if (gResult[0] != null && !gResult[0].isEmpty() && !gResult[0].equals(word)) {
+                return "[Google] " + gResult[0]; // ✅ نمایش منبع
+            }
+
+            String m = null;
+            try { m = callMyMemory(word, src, tgt); } catch (Exception e) {}
+            if (m != null && !m.isEmpty() && !m.equals(word)) {
+                return "[MyMemory] " + m; // ✅ نمایش منبع
+            }
+        }
+
+        return null;
+    }
+
+    public static String smartClean(String text) {
+        if (text == null) return "";
+        text = text.trim();
+        if (text.isEmpty()) return "";
+
+        int engChars = 0;
+        int nonEngChars = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                engChars++;
+            } else if (Character.isLetter(c)) {
+                nonEngChars++;
+            }
+        }
+
+        if (nonEngChars > engChars) {
+            return text;
+        }
+        return text.toLowerCase().replaceAll("[^a-z]", "");
+    }
+
+    public static String smartCleanLong(String text) {
+        if (text == null) return "";
+        text = text.trim();
+        if (text.isEmpty()) return "";
+
+        int engChars = 0;
+        int nonEngChars = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                engChars++;
+            } else if (Character.isLetter(c)) {
+                nonEngChars++;
+            }
+        }
+
+        if (nonEngChars > engChars) {
+            return text;
+        }
+        return text.toLowerCase().replaceAll("[^a-z\\s]", " ").trim();
+    }
+
+    public static String unescapeUnicode(String input) {
+        if (input == null) return null;
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        while (i < input.length()) {
+            char c = input.charAt(i);
+            if (c == '\\' && i + 5 < input.length() && input.charAt(i + 1) == 'u') {
+                try {
+                    int code = Integer.parseInt(input.substring(i + 2, i + 6), 16);
+                    sb.append((char) code);
+                    i += 6;
+                    continue;
+                } catch (NumberFormatException e) {}
+            }
+            sb.append(c);
+            i++;
+        }
+        return sb.toString();
+    }
+
+    public static String getSavedLanguage() {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        return prefs.getString(KEY_LANGUAGE, "fa");
+    }
+
+    public static String getSavedSourceLang() {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String saved = prefs.getString(KEY_SOURCE_LANG, null);
+        if (saved != null) return saved;
+
+        // تشخیص خودکار بر اساس زبان گوشی
+        String deviceLang = java.util.Locale.getDefault().getLanguage();
+        if (deviceLang.equals("fa")) return "en";
+        else return "fa";
+    }
+
+    public static void setSavedLanguage(String code) {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prefs.edit().putString(KEY_LANGUAGE, code).apply();
+    }
+
+    public static void setSavedSourceLang(String code) {
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prefs.edit().putString(KEY_SOURCE_LANG, code).apply();
+    }
+
+    public static String getLanguageName(String code) {
+        for (String[] lang : LANGUAGES) {
+            if (lang[0].equals(code)) return lang[1];
+        }
+        return code;
+    }
+
+    public static String getLanguageShort(String code) {
+        for (String[] lang : LANGUAGES) {
+            if (lang[0].equals(code)) return lang[2];
+        }
+        return code.toUpperCase();
+    }
+
+    public static String getSavedLanguageName() {
+        return getLanguageName(getSavedLanguage());
+    }
+
+    public static String getSavedSourceLangName() {
+        return getLanguageName(getSavedSourceLang());
+    }
+
+    // انتخاب زبان مقصد
+    private void showLangList(final boolean isSource) {
+        if (!OfflineTranslator.isGmsAvailable(this)) {
+            showLangListFallback(isSource, null);
+            return;
+        }
+        
+        // نمایش یک دیالوگ موقت یا فقط صبر کردن
+        Toast.makeText(this, "در حال بررسی مدل‌های آفلاین...", Toast.LENGTH_SHORT).show();
+        
+        OfflineTranslator.getDownloadedModels(this, models -> {
+            java.util.Set<String> downloaded = new java.util.HashSet<>();
+            if (models != null) {
+                for (com.google.mlkit.nl.translate.TranslateRemoteModel m : models) {
+                    downloaded.add(m.getLanguage());
+                }
+            }
+            // انگلیسی همیشه از قبل نصب است
+            downloaded.add("en"); 
+            
+            runOnUiThread(() -> showLangListFallback(isSource, downloaded));
+        });
+    }
+
+    private void showLangListFallback(boolean isSource, java.util.Set<String> downloaded) {
+        String[] names = new String[LANGUAGES.length];
+        for (int i = 0; i < LANGUAGES.length; i++) {
+            String code = LANGUAGES[i][0];
+            boolean has = (downloaded == null) || downloaded.contains(code);
+            String icon = has ? "✅" : "📥";
+            if (downloaded == null) icon = ""; // اگه GMS نباشه آیکون نمی‌ذاریم
+            
+            names[i] = icon.isEmpty() ? (LANGUAGES[i][2] + "  " + LANGUAGES[i][1]) 
+                                      : (icon + "  " + LANGUAGES[i][2] + "  " + LANGUAGES[i][1]);
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle(isSource ? "زبان مبدأ" : "زبان مقصد")
+            .setItems(names, (dialog, which) -> {
+                String code = LANGUAGES[which][0];
+                if (isSource) {
+                    setSavedSourceLang(code);
+                } else {
+                    setSavedLanguage(code);
+                }
+                updateLanguageUI();
+                checkAndPromptModelDownload(
+                    isSource ? code : getSavedSourceLang(), 
+                    isSource ? getSavedLanguage() : code
+                );
+            })
+            .setNegativeButton("لغو", null)
+            .show();
+    }
+
+    private void showLanguageDialog(final Button languageButton) {
+        showLangList(false);
+    }
+
+    private void showSourceLangDialog() {
+        showLangList(true);
+    }
+
+
+    // انتخاب زبان مبدأ
+    
+
+    // به‌روزرسانی نمایش زبان‌ها
+    private void updateLanguageUI() {
+        TextView srcText = findViewById(R.id.sourceLangText);
+        TextView tgtText = findViewById(R.id.targetLangText);
+        if (srcText != null) {
+            srcText.setText(getLanguageShort(getSavedSourceLang()) + "  " + getSavedSourceLangName());
+        }
+        if (tgtText != null) {
+            tgtText.setText(getLanguageShort(getSavedLanguage()) + "  " + getSavedLanguageName());
+        }
+    }
+
+    // جابجایی زبان‌ها
+    private void swapLanguages() {
+        String src = getSavedSourceLang();
+        String tgt = getSavedLanguage();
+        setSavedSourceLang(tgt);
+        setSavedLanguage(src);
+        updateLanguageUI();
+        Toast.makeText(this, "زبان‌ها جابجا شد", Toast.LENGTH_SHORT).show();
+    }
+
+
+    // ========== متدهای OCR (ML Kit) ==========
+    private static final int PICK_IMAGE_REQUEST = 1;
+
+    private void pickImageFromGallery() {
+        Intent intent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        intent.setType("image/*");
+        startActivityForResult(intent, PICK_IMAGE_REQUEST);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        // برای OCR از گالری
+        if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            Uri imageUri = data.getData();
+            extractTextFromImage(imageUri);
+        }
+
+        // برای MediaProjection
+        if (requestCode == 2000) {
+            if (resultCode == RESULT_OK && data != null) {
+                FloatingBubbleService.mediaProjectionResultCode = resultCode;
+                FloatingBubbleService.mediaProjectionData = data;
+
+                MediaProjectionManager projectionManager =
+                    (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+
+                try {
+                    FloatingBubbleService.activeProjection =
+                        projectionManager.getMediaProjection(resultCode, data);
+                } catch (Exception e) {
+                    FloatingBubbleService.activeProjection = null;
+                    Toast.makeText(MainActivity.this,
+                        "خطا در فعال‌سازی MediaProjection: " + e.getMessage(),
+                        Toast.LENGTH_LONG).show();
+                    return;
+                }
+
+                if (FloatingBubbleService.activeProjection == null) {
+                    Toast.makeText(MainActivity.this,
+                        "MediaProjection ساخته نشد",
+                        Toast.LENGTH_LONG).show();
+                    return;
+                }
+
+                Intent serviceIntent = new Intent(MainActivity.this,
+                    FloatingBubbleService.class);
+                Button bubbleButton = findViewById(R.id.translateButton);
+                bubbleButton.setText("🔴 خاموش کردن حباب OCR");
+                startService(serviceIntent);
+
+                Toast.makeText(MainActivity.this, "حباب فعال شد", Toast.LENGTH_SHORT).show();
+            } else {
+                Button bubbleButton = findViewById(R.id.translateButton);
+                bubbleButton.setText("🔵 فعال‌سازی حباب OCR");
+                Toast.makeText(MainActivity.this, "اجازه ضبط صفحه داده نشد", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private void extractTextFromImage(Uri imageUri) {
+        try {
+            final TextView resultText = findViewById(R.id.resultText);
+            resultText.setText("در حال استخراج متن...");
+
+            Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), imageUri);
+            InputImage image = InputImage.fromBitmap(bitmap, 0);
+
+            com.google.mlkit.vision.text.TextRecognizer recognizer =
+                    TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+
+            recognizer.process(image)
+                    .addOnSuccessListener(visionText -> {
+                        String extractedText = visionText.getText();
+                        if (extractedText.isEmpty()) {
+                            resultText.setText("متنی در تصویر پیدا نشد.");
+                        } else {
+                            resultText.setText("متن استخراج شده:\n\n" + extractedText);
+                            showEditableTextDialog(extractedText);
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        resultText.setText("خطا در استخراج متن: " + e.getMessage());
+                    });
+        } catch (IOException e) {
+            e.printStackTrace();
+            TextView resultText = findViewById(R.id.resultText);
+            resultText.setText("خطا در بارگذاری تصویر: " + e.getMessage());
+        }
+    }
+
+    // ========== سرویس گوش دادن به کلیپ‌بورد ==========
+    public static class ClipboardListenerService extends Service {
+        public String getGoogleTranslation(String word) {
+            try {
+                String url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" + getSavedSourceLang() + "&tl=" + getSavedLanguage() + "&dt=t&q=" + java.net.URLEncoder.encode(word, "UTF-8");
+                java.net.URL obj = new java.net.URL(url);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(1500);
+                conn.setReadTimeout(1500);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+                reader.close();
+                String json = response.toString();
+                int start = json.indexOf("[[[\"");
+                if (start == -1) return null;
+                start += 4;
+                int end = json.indexOf("\"", start);
+                if (end == -1) return null;
+                String result = json.substring(start, end);
+                result = result.replace("\\u200c", "\u200c");
+                return result;
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        private String wrapText(String text, int wordsPerLine) {
+            String[] words = text.split(" ");
+            StringBuilder result = new StringBuilder();
+            for (int i = 0; i < words.length; i++) {
+                result.append(words[i]);
+                if ((i + 1) % wordsPerLine == 0) {
+                    result.append("\n");
+                } else if (i < words.length - 1) {
+                    result.append(" ");
+                }
+            }
+            return result.toString();
+        }
+
+        // ========== ترجمه با MyMemory (API جایگزین) ==========
+        public String getMyMemoryTranslation(String word) {
+            try {
+                String langPair = getSavedSourceLang() + "|" + getSavedLanguage();
+                String url = "https://api.mymemory.translated.net/get?q=" +
+                        java.net.URLEncoder.encode(word, "UTF-8") +
+                        "&langpair=" + java.net.URLEncoder.encode(langPair, "UTF-8");
+                java.net.URL obj = new java.net.URL(url);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) obj.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(2000);
+                conn.setReadTimeout(2000);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+                reader.close();
+                String json = response.toString();
+                String key = "\"translatedText\":\"";
+                int start = json.indexOf(key);
+                if (start == -1) return null;
+                start += key.length();
+                int end = json.indexOf("\"", start);
+                if (end == -1) return null;
+                String result = json.substring(start, end);
+                result = result.replace("\\u200c", "\u200c");
+                if (result.isEmpty() || result.equals(word)) return null;
+                return result;
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        private MyDatabase db;
+        private android.speech.tts.TextToSpeech tts;
+        private WindowManager windowManager;
+        private View popupView;
+        private Handler handler = new Handler(Looper.getMainLooper());
+        private String lastClipboard = "";
+public static boolean clipboardEnabled = false;
+        private Runnable clipboardRunnable;
+        private Runnable hidePopupRunnable;
+
+        @Override
+        public void onCreate() {
+            super.onCreate();
+            db = new MyDatabase(this);
+            windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+            clipboardEnabled = true;
+            startClipboardListener();
+            tts = new android.speech.tts.TextToSpeech(this, new android.speech.tts.TextToSpeech.OnInitListener() {
+                @Override
+                public void onInit(int status) {
+                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                        tts.setLanguage(java.util.Locale.US);
+                    }
+                }
+            });
+        }
+
+        private void startClipboardListener() {
+            clipboardRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                        if (cm != null && cm.hasPrimaryClip()) {
+                            android.content.ClipData clip = cm.getPrimaryClip();
+                            if (clip != null && clip.getItemCount() > 0) {
+                                CharSequence text = clip.getItemAt(0).getText();
+                                if (text != null) {
+                                    String copied = text.toString().trim();
+                                    if (!copied.isEmpty() && !copied.equals(lastClipboard)) {
+                                        lastClipboard = copied;
+                                        handleCopiedText(copied);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Exception e) {}
+                    handler.postDelayed(clipboardRunnable, 1000);
+                }
+            };
+            handler.post(clipboardRunnable);
+        }
+
+        private void handleCopiedText(final String text) {
+            if (!clipboardEnabled) return;
+            final String cleanWord = smartCleanLong(text);
+            if (cleanWord.isEmpty()) return;
+
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String meaning = null;
+
+                    // ⚡ ML Kit اول
+                    if (OfflineTranslator.isGmsAvailable(ClipboardListenerService.this)) {
+                        try {
+                            meaning = translateOffline(ClipboardListenerService.this, cleanWord,
+                                getSavedSourceLang(), getSavedLanguage());
+                        } catch (Exception e) {
+                            meaning = null;
+                        }
+                    }
+
+                    // 🌐 آنلاین (Google اول)
+                    if (meaning == null || meaning.length() == 0 || meaning.equals(cleanWord)) {
+                        try {
+                            meaning = smartTranslateFull(ClipboardListenerService.this, cleanWord,
+                                getSavedSourceLang(), getSavedLanguage());
+                        } catch (Exception e) {
+                            meaning = null;
+                        }
+                    }
+
+                    final String finalMeaning;
+                    if (meaning != null && meaning.length() > 0 && !meaning.equals(cleanWord)) {
+                        String dbMeaning = db.getMeaning(cleanWord);
+                        if (dbMeaning == null || !dbMeaning.equals(meaning)) {
+                            db.saveMeaning(cleanWord, meaning);
+                        }
+                        finalMeaning = meaning;
+                    } else {
+                        finalMeaning = db.getMeaning(cleanWord);
+                    }
+
+                    if (finalMeaning != null) {
+                        handler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                showPopup(cleanWord, finalMeaning);
+                            }
+                        });
+                    }
+                }
+            }).start();
+        }
+
+        private void showPopup(String word, String meaning) {
+            if (popupView != null) {
+                try { windowManager.removeView(popupView); } catch (Exception e) {}
+                popupView = null;
+            }
+            if (hidePopupRunnable != null) handler.removeCallbacks(hidePopupRunnable);
+
+            LinearLayout layout = new LinearLayout(ClipboardListenerService.this);
+            layout.setOrientation(LinearLayout.VERTICAL);
+            // ✅ عرض ثابت و منظم برای کادر
+            layout.setMinimumWidth(600); 
+
+            GradientDrawable bg = new GradientDrawable();
+            bg.setShape(GradientDrawable.RECTANGLE);
+            bg.setColor(Color.argb(240, 255, 255, 255));
+            bg.setCornerRadius(30);
+            bg.setStroke(2, Color.argb(100, 200, 200, 200));
+            layout.setBackground(bg);
+            layout.setAlpha(0.95f);
+            layout.setPadding(30, 20, 30, 20);
+            layout.setGravity(Gravity.CENTER_HORIZONTAL);
+
+            // ✅ دکمه ✖ فقط برای متن‌های طولانی
+            final boolean isLongText = (meaning != null && meaning.length() > 15);
+            if (isLongText) {
+                TextView closeBtn = new TextView(ClipboardListenerService.this);
+                closeBtn.setText("✖");
+                closeBtn.setTextColor(Color.GRAY);
+                closeBtn.setTextSize(18);
+                closeBtn.setPadding(10, 0, 10, 10);
+                LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                btnParams.gravity = Gravity.END;
+                closeBtn.setLayoutParams(btnParams);
+                layout.addView(closeBtn);
+
+                closeBtn.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        if (popupView != null) {
+                            try { windowManager.removeView(popupView); } catch (Exception e) {}
+                            popupView = null;
+                        }
+                        if (hidePopupRunnable != null) handler.removeCallbacks(hidePopupRunnable);
+                    }
+                });
+            }
+
+            // ✅ نمایش کلمه اصلی (فقط اگر کوتاه باشه)
+            LinearLayout wordRow = new LinearLayout(ClipboardListenerService.this);
+            wordRow.setOrientation(LinearLayout.HORIZONTAL);
+            wordRow.setGravity(Gravity.CENTER_VERTICAL);
+            wordRow.setPadding(10, 0, 10, 0);
+
+            TextView wordText = new TextView(ClipboardListenerService.this);
+            wordText.setText(word);
+            wordText.setTextSize(20);
+            wordText.setTextColor(Color.BLACK);
+            wordText.setPadding(0, 0, 30, 0);
+            
+            if (word.split("\\s+").length <= 4) { 
+                wordRow.addView(wordText); 
+            }
+
+            Button speakBtn = new Button(ClipboardListenerService.this);
+            speakBtn.setText("🔊");
+            speakBtn.setTextSize(18);
+            speakBtn.setBackgroundColor(Color.TRANSPARENT);
+            speakBtn.setPadding(20, 0, 20, 0);
+            speakBtn.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (tts != null) {
+                        tts.speak(word, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, null);
+                    }
+                }
+            });
+            wordRow.addView(speakBtn);
+
+            // ✅ نمایش متن ترجمه شده
+            TextView meaningText = new TextView(ClipboardListenerService.this);
+            meaningText.setText(meaning); // بدون wrapText که کادر رو خراب می‌کرد
+            meaningText.setTextSize(18);
+            meaningText.setTextColor(Color.DKGRAY);
+            meaningText.setPadding(0, 15, 0, 15);
+            meaningText.setGravity(Gravity.CENTER_HORIZONTAL);
+            meaningText.setMaxWidth(600); // محدودیت عرض برای متن‌های طولانی
+
+            layout.addView(wordRow);
+            layout.addView(meaningText);
+
+            int layoutType;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+            } else {
+                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
+            }
+
+            WindowManager.LayoutParams popupParams = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    layoutType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT);
+
+            popupParams.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+            popupParams.y = 150;
+
+            popupView = layout;
+            windowManager.addView(popupView, popupParams);
+
+            // ✅ تایمر خودکار (برای کوتاه‌ها ۳ ثانیه، برای بلندها بیشتر)
+            hidePopupRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    if (popupView != null) {
+                        try { windowManager.removeView(popupView); } catch (Exception e) {}
+                        popupView = null;
+                    }
+                }
+            };
+            long displayTime = isLongText ? 15000 : 3000;
+            handler.postDelayed(hidePopupRunnable, displayTime);
+        }
+
+        @Override
+        public void onDestroy() {
+            if (tts != null) { tts.stop(); tts.shutdown(); }
+            super.onDestroy();
+            if (clipboardRunnable != null) handler.removeCallbacks(clipboardRunnable);
+            if (popupView != null) {
+                try { windowManager.removeView(popupView); } catch (Exception e) {}
+            }
+        }
+
+        @Override
+        public IBinder onBind(Intent intent) { return null; }
+    }
+
+}
