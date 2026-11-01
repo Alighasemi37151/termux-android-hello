@@ -19,8 +19,8 @@ android {
         applicationId "com.taptranslate.app"
         minSdk 21
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode 3
+        versionName "1.2"
 
         // فقط معماری‌های arm (گوشی‌های واقعی)
         // x86 و x86_64 حذف شدن چون فقط شبیه‌ساز ازشون استفاده می‌کنه
